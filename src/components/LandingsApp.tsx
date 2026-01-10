@@ -37,7 +37,7 @@ function sortFacilities(list: Facility[], sortKey: SortKey) {
   );
 }
 
-export default function LandingBadgeApp() {
+export default function LandingsApp() {
   const [publicFacilities, setPublicFacilities] = useState<Facility[]>([]);
   const [publicError, setPublicError] = useState<string | null>(null);
   const [flights, setFlights] = useState<FlightRow[]>([]);

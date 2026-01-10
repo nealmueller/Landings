@@ -1,5 +1,5 @@
-import LandingBadgeApp from "@/components/LandingBadgeApp";
+import LandingsApp from "@/components/LandingsApp";
 
 export default function Home() {
-  return <LandingBadgeApp />;
+  return <LandingsApp />;
 }

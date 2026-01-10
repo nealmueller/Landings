@@ -3,7 +3,7 @@ const path = require("path");
 const { execFileSync } = require("child_process");
 const Papa = require("papaparse");
 
-const ROOT = "/Users/nealmueller/dev/LandingBadge";
+const ROOT = path.resolve(__dirname, "..");
 const RAW_DIR = path.join(ROOT, "data", "raw");
 const OUTPUT_DIR = path.join(ROOT, "data", "ca");
 const PUBLIC_OUTPUT_DIR = path.join(ROOT, "public", "data", "ca");
