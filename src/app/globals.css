@@ -1,0 +1,49 @@
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:wght@400;600;700&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
+@import "leaflet/dist/leaflet.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  @apply bg-bone text-ink antialiased;
+}
+
+::selection {
+  background: #f9c971;
+  color: #121417;
+}
+
+.leaflet-container {
+  font-family: 'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
+}
+
+.leaflet-tile {
+  filter: grayscale(1) contrast(1.08) brightness(1.02);
+}
+
+.marker-visited {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: #2f7d46;
+  border: 2px solid #f3f0e8;
+  box-shadow: 0 0 0 2px rgba(47, 125, 70, 0.35);
+}
+
+.marker-unvisited {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: #121417;
+  border: 2px solid #f3f0e8;
+  box-shadow: 0 0 0 2px rgba(18, 20, 23, 0.35);
+}
+
+details summary {
+  cursor: pointer;
+}
