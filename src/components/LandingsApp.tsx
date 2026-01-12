@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, useEffect } from "react";
-import FacilityMap from "@/components/FacilityMap";
+import dynamic from "next/dynamic";
 import {
   buildScopeFacilities,
   computeFacilityMatches,
@@ -12,6 +12,13 @@ import {
 import { parseFacilitiesMaster, type Facility } from "@/lib/datasets";
 import { parseForeFlightCsv, type FlightRow } from "@/lib/foreflight";
 
+const FacilityMap = dynamic(() => import("@/components/FacilityMap"), {
+  ssr: false,
+  loading: () => (
+    <div className="h-[360px] w-full rounded-3xl border border-ink/10 bg-white shadow-card" />
+  )
+});
+
 const TEXT_TOGGLE_NOTE =
   "Matches in notes/remarks count as landings without requiring keywords.";
 
@@ -19,9 +26,17 @@ const mapSortOptions = [
   { value: "id", label: "Airport ID" },
   { value: "name", label: "Name" },
   { value: "city", label: "City" }
-];
+] as const;
 
 type SortKey = (typeof mapSortOptions)[number]["value"];
+
+const sortAccessors: Record<SortKey, (facility: Facility) => string> = {
+  id: (facility) => facility.id,
+  name: (facility) => facility.name,
+  city: (facility) => facility.city
+};
+
+const demoSteps = [0.25, 0.5, 0.75] as const;
 
 function formatPercent(value: number) {
   return `${Math.round(value * 100)}%`;
@@ -32,8 +47,9 @@ function formatCount(value: number) {
 }
 
 function sortFacilities(list: Facility[], sortKey: SortKey) {
+  const accessor = sortAccessors[sortKey];
   return [...list].sort((a, b) =>
-    (a[sortKey] || "").localeCompare(b[sortKey] || "")
+    accessor(a).localeCompare(accessor(b))
   );
 }
 
@@ -48,6 +64,7 @@ export default function LandingsApp() {
   const [unvisitedSearch, setUnvisitedSearch] = useState("");
   const [visitedSort, setVisitedSort] = useState<SortKey>("id");
   const [unvisitedSort, setUnvisitedSort] = useState<SortKey>("id");
+  const [demoStep, setDemoStep] = useState(0);
   const [sourceList, setSourceList] = useState<
     Array<{
       name: string;
@@ -214,6 +231,25 @@ export default function LandingsApp() {
     setFlightError(result.error || null);
   };
 
+  const handleDemoFill = () => {
+    if (scopeFacilities.length === 0) {
+      setFlightError("Airport list is still loading. Try again in a moment.");
+      return;
+    }
+    const percent = demoSteps[demoStep % demoSteps.length];
+    const shuffled = [...scopeFacilities].sort(() => Math.random() - 0.5);
+    const count = Math.max(1, Math.round(shuffled.length * percent));
+    const demoFlights: FlightRow[] = shuffled.slice(0, count).map((facility) => ({
+      date: "",
+      from: facility.id,
+      to: facility.id,
+      textFields: []
+    }));
+    setFlights(demoFlights);
+    setFlightError(null);
+    setDemoStep((prev) => (prev + 1) % demoSteps.length);
+  };
+
   const emptyMatches = hasFlights && visitedSet.size === 0;
 
   return (
@@ -235,15 +271,24 @@ export default function LandingsApp() {
               <h2 className="font-display text-xl text-ink">
                 Import ForeFlight CSV
               </h2>
-              <label className="mt-4 inline-flex cursor-pointer items-center justify-center rounded-2xl border border-ink/10 bg-pine px-4 py-3 text-sm font-semibold text-bone shadow-card">
-                <input
-                  type="file"
-                  accept=".csv"
-                  className="hidden"
-                  onChange={handleForeFlightUpload}
-                />
-                Upload Foreflight Logbook CSV
-              </label>
+              <div className="mt-4 flex flex-wrap gap-3">
+                <label className="inline-flex cursor-pointer items-center justify-center rounded-2xl border border-ink/10 bg-pine px-4 py-3 text-sm font-semibold text-bone shadow-card">
+                  <input
+                    type="file"
+                    accept=".csv"
+                    className="hidden"
+                    onChange={handleForeFlightUpload}
+                  />
+                  Upload Foreflight Logbook CSV
+                </label>
+                <button
+                  type="button"
+                  onClick={handleDemoFill}
+                  className="inline-flex items-center justify-center rounded-2xl border border-ink/10 bg-white px-4 py-3 text-sm font-semibold text-ink shadow-card"
+                >
+                  Load demo {Math.round(demoSteps[demoStep] * 100)}%
+                </button>
+              </div>
               {flightError && (
                 <p className="mt-3 text-sm text-red-600">{flightError}</p>
               )}

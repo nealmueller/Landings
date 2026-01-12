@@ -20,23 +20,23 @@ export function parseFacilitiesMaster(csvText: string): Facility[] {
     skipEmptyLines: true
   });
 
-  return parsed.data
-    .map((row) => {
-      const rawId = row.id || row.AIRPORTID || row.AIRPORT_ID || row.AIRPORT || "";
-      const id = normalizeFacilityId(rawId);
-      if (!id) return null;
+  return parsed.data.flatMap((row) => {
+    const rawId = row.id || row.AIRPORTID || row.AIRPORT_ID || row.AIRPORT || "";
+    const id = normalizeFacilityId(rawId);
+    if (!id) return [];
 
-      const name = row.name || row.NAME || row.AIRPORTNAME || row.AIRPORT_NAME || "";
-      const city = row.city || row.CITY || row.CITY_NAME || row.MUNICIPALITY || "";
-      const county = row.county || row.COUNTY || "";
-      const latitude = parseFloat(
-        row.latitude || row.LATITUDE || row.LAT || ""
-      );
-      const longitude = parseFloat(
-        row.longitude || row.LONGITUDE || row.LON || row.LONG || ""
-      );
+    const name = row.name || row.NAME || row.AIRPORTNAME || row.AIRPORT_NAME || "";
+    const city = row.city || row.CITY || row.CITY_NAME || row.MUNICIPALITY || "";
+    const county = row.county || row.COUNTY || "";
+    const latitude = parseFloat(
+      row.latitude || row.LATITUDE || row.LAT || ""
+    );
+    const longitude = parseFloat(
+      row.longitude || row.LONGITUDE || row.LON || row.LONG || ""
+    );
 
-      return {
+    return [
+      {
         id,
         name: name.trim() || id,
         city: city.trim(),
@@ -47,9 +47,9 @@ export function parseFacilitiesMaster(csvText: string): Facility[] {
         type: row.type,
         sources: row.sources,
         corroborated: row.corroborated
-      } satisfies Facility;
-    })
-    .filter((facility): facility is Facility => Boolean(facility));
+      } satisfies Facility
+    ];
+  });
 }
 
 export function parseOurAirports(csvText: string): Facility[] {
@@ -60,23 +60,24 @@ export function parseOurAirports(csvText: string): Facility[] {
 
   return parsed.data
     .filter((row) => row.iso_region === "US-CA")
-    .map((row) => {
+    .flatMap((row) => {
       const id = normalizeFacilityId(row.ident || "");
-      if (!id) return null;
+      if (!id) return [];
 
       const latitude = parseFloat(row.latitude_deg || "");
       const longitude = parseFloat(row.longitude_deg || "");
 
-      return {
-        id,
-        name: (row.name || id).trim(),
-        city: (row.municipality || "").trim(),
-        county: "",
-        latitude: Number.isFinite(latitude) ? latitude : undefined,
-        longitude: Number.isFinite(longitude) ? longitude : undefined,
-        source: "ourairports",
-        type: row.type
-      } satisfies Facility;
-    })
-    .filter((facility): facility is Facility => Boolean(facility));
+      return [
+        {
+          id,
+          name: (row.name || id).trim(),
+          city: (row.municipality || "").trim(),
+          county: "",
+          latitude: Number.isFinite(latitude) ? latitude : undefined,
+          longitude: Number.isFinite(longitude) ? longitude : undefined,
+          source: "ourairports",
+          type: row.type
+        } satisfies Facility
+      ];
+    });
 }
