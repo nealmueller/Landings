@@ -3,6 +3,7 @@ import { normalizeFacilityId } from "@/lib/normalize";
 
 export type Facility = {
   id: string;
+  state?: string;
   name: string;
   city: string;
   county: string;
@@ -34,10 +35,12 @@ export function parseFacilitiesMaster(csvText: string): Facility[] {
     const longitude = parseFloat(
       row.longitude || row.LONGITUDE || row.LON || row.LONG || ""
     );
+    const state = (row.state || row.STATE || row.STATE_CODE || "").trim();
 
     return [
       {
         id,
+        state,
         name: name.trim() || id,
         city: city.trim(),
         county: county.trim(),

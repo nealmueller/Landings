@@ -6,9 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "next lint --max-warnings=0",
     "test": "vitest",
-    "build:data": "node scripts/build-datasets.js"
+    "build:data": "node scripts/build-datasets.js",
+    "check": "npm run lint && npm run test -- --run && npm run build"
   },
   "dependencies": {
     "leaflet": "^1.9.4",

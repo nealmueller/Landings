@@ -17,3 +17,4 @@ out
 # large raw source archives (kept locally, not in git)
 data/raw/*.zip
 .vercel
+.env*.local

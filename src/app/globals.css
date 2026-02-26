@@ -22,26 +22,8 @@ body {
   font-family: 'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
 }
 
-.leaflet-tile {
-  filter: grayscale(1) contrast(1.08) brightness(1.02);
-}
-
-.marker-visited {
-  width: 12px;
-  height: 12px;
-  border-radius: 999px;
-  background: #2f7d46;
-  border: 2px solid #f3f0e8;
-  box-shadow: 0 0 0 2px rgba(47, 125, 70, 0.35);
-}
-
-.marker-unvisited {
-  width: 12px;
-  height: 12px;
-  border-radius: 999px;
-  background: #121417;
-  border: 2px solid #f3f0e8;
-  box-shadow: 0 0 0 2px rgba(18, 20, 23, 0.35);
+.leaflet-tile-pane {
+  filter: grayscale(1) contrast(0.88) brightness(1.05);
 }
 
 details summary {

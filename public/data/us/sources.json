@@ -1,0 +1,10 @@
+[
+  {
+    "name": "FAA NASR APT_BASE",
+    "file": "data/raw/faa_nasr_2026-01-22_APT_CSV.zip (APT_BASE.csv)",
+    "deduped": "yes",
+    "corroborated": "single source",
+    "updated": "2026-01-22",
+    "total": 4722
+  }
+]

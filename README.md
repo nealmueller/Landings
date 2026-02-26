@@ -1,6 +1,6 @@
 # Landings
 
-Landing coverage for ForeFlight logbooks. Beta version only includes California.
+Landing coverage for ForeFlight logbooks across US public airports.
 
 ## Run locally
 
@@ -11,28 +11,49 @@ npm run dev
 
 Open `http://localhost:3000`.
 
+## Quality checks
+
+```bash
+npm run check
+```
+
+This runs lint, tests, and production build locally. The same checks run in CI on GitHub Actions.
+
 ## Privacy model
 
 - All parsing and matching runs in your browser.
 - No server-side uploads, accounts, analytics, or tracking.
 - The logbook never leaves your device.
 
+## Local persistence
+
+- The last imported ForeFlight CSV is stored in IndexedDB when available, with a localStorage fallback.
+- Dot size is stored in localStorage.
+- Use the “Clear local data” button in the Import ForeFlight CSV panel to remove the saved logbook and settings.
+
 ## Data sources
 
-- FAA NASR APT_BASE (CA public airports only) -> `data/ca/facilities_master.csv`
+- FAA NASR APT_BASE (US public airports) -> `data/us/facilities_master.csv`
 - Raw source inputs live under `data/raw`
 
 ### Rebuild the master list
 
 ```bash
-node scripts/build-datasets.js
+npm run build:data
 ```
 
-## Adding more states later
+Dataset build output is written to:
 
-1. Add a new CSV under `data/<state>/Public_Airport.csv` with the same header columns.
-2. Copy it to `public/data/<state>/Public_Airport.csv` so the browser can fetch it.
-3. Update the UI to load and label the new state.
+- `data/us/facilities_master.csv`
+- `public/data/us/facilities_master.csv`
+- `data/us/sources.json`
+- `public/data/us/sources.json`
+
+To refresh data for a new FAA cycle:
+
+1. Download the FAA NASR APT CSV ZIP and place it under `data/raw`.
+2. Name it `faa_nasr_YYYY-MM-DD_APT_CSV.zip`.
+3. Run `npm run build:data`.
 
 ## Deployment
 

@@ -5,15 +5,51 @@ const Papa = require("papaparse");
 
 const ROOT = path.resolve(__dirname, "..");
 const RAW_DIR = path.join(ROOT, "data", "raw");
-const OUTPUT_DIR = path.join(ROOT, "data", "ca");
-const PUBLIC_OUTPUT_DIR = path.join(ROOT, "public", "data", "ca");
+const OUTPUT_DIR = path.join(ROOT, "data", "us");
+const PUBLIC_OUTPUT_DIR = path.join(ROOT, "public", "data", "us");
+const FAA_ARCHIVE_PATTERN = /^faa_nasr_(\d{4}-\d{2}-\d{2})_APT_CSV\.zip$/i;
+
+function resolveFaaSource() {
+  const candidates = fs
+    .readdirSync(RAW_DIR)
+    .map((fileName) => {
+      const match = fileName.match(FAA_ARCHIVE_PATTERN);
+      if (!match) return null;
+      const fullPath = path.join(RAW_DIR, fileName);
+      const stats = fs.statSync(fullPath);
+      return {
+        fileName,
+        fullPath,
+        cycleDate: match[1],
+        modifiedAt: stats.mtime.getTime()
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => {
+      if (a.cycleDate !== b.cycleDate) {
+        return b.cycleDate.localeCompare(a.cycleDate);
+      }
+      return b.modifiedAt - a.modifiedAt;
+    });
+
+  const latest = candidates[0];
+  if (!latest) {
+    throw new Error(
+      `No FAA NASR archive found in ${RAW_DIR}. Expected file name like faa_nasr_YYYY-MM-DD_APT_CSV.zip.`
+    );
+  }
+
+  return {
+    name: "FAA NASR APT_BASE",
+    file: latest.fullPath,
+    fileName: latest.fileName,
+    cycleDate: latest.cycleDate,
+    inner: "APT_BASE.csv"
+  };
+}
 
 const SOURCES = {
-  faa: {
-    name: "FAA NASR APT_BASE",
-    file: path.join(RAW_DIR, "faa_nasr_2026-01-22_APT_CSV.zip"),
-    inner: "APT_BASE.csv"
-  }
+  faa: resolveFaaSource()
 };
 
 function normalizeId(value) {
@@ -26,6 +62,61 @@ function normalizeId(value) {
   }
   return cleaned;
 }
+
+const STATE_LIST = [
+  ["AL", "Alabama"],
+  ["AK", "Alaska"],
+  ["AZ", "Arizona"],
+  ["AR", "Arkansas"],
+  ["CA", "California"],
+  ["CO", "Colorado"],
+  ["CT", "Connecticut"],
+  ["DE", "Delaware"],
+  ["FL", "Florida"],
+  ["GA", "Georgia"],
+  ["HI", "Hawaii"],
+  ["ID", "Idaho"],
+  ["IL", "Illinois"],
+  ["IN", "Indiana"],
+  ["IA", "Iowa"],
+  ["KS", "Kansas"],
+  ["KY", "Kentucky"],
+  ["LA", "Louisiana"],
+  ["ME", "Maine"],
+  ["MD", "Maryland"],
+  ["MA", "Massachusetts"],
+  ["MI", "Michigan"],
+  ["MN", "Minnesota"],
+  ["MS", "Mississippi"],
+  ["MO", "Missouri"],
+  ["MT", "Montana"],
+  ["NE", "Nebraska"],
+  ["NV", "Nevada"],
+  ["NH", "New Hampshire"],
+  ["NJ", "New Jersey"],
+  ["NM", "New Mexico"],
+  ["NY", "New York"],
+  ["NC", "North Carolina"],
+  ["ND", "North Dakota"],
+  ["OH", "Ohio"],
+  ["OK", "Oklahoma"],
+  ["OR", "Oregon"],
+  ["PA", "Pennsylvania"],
+  ["RI", "Rhode Island"],
+  ["SC", "South Carolina"],
+  ["SD", "South Dakota"],
+  ["TN", "Tennessee"],
+  ["TX", "Texas"],
+  ["UT", "Utah"],
+  ["VT", "Vermont"],
+  ["VA", "Virginia"],
+  ["WA", "Washington"],
+  ["WV", "West Virginia"],
+  ["WI", "Wisconsin"],
+  ["WY", "Wyoming"]
+];
+
+const STATE_CODES = new Set(STATE_LIST.map(([code]) => code));
 
 function parseCsv(text) {
   const parsed = Papa.parse(text, { header: true, skipEmptyLines: true });
@@ -88,6 +179,7 @@ function buildFacilityList() {
     if (!records.has(id)) {
       records.set(id, {
         id,
+        state: "",
         name: "",
         city: "",
         county: "",
@@ -123,13 +215,14 @@ function buildFacilityList() {
 
   const faaRows = parseZipCsv(SOURCES.faa.file, SOURCES.faa.inner);
   for (const row of faaRows) {
-    if (row.STATE_CODE !== "CA") continue;
+    if (!STATE_CODES.has(row.STATE_CODE)) continue;
     if (row.SITE_TYPE_CODE !== "A") continue;
     if (row.FACILITY_USE_CODE !== "PU") continue;
     const id = normalizeId(row.ARPT_ID || row.ICAO_ID);
     if (!id) continue;
     const entry = getOrCreate(id);
     addSource(entry, "faa");
+    entry.state = row.STATE_CODE;
     applyField(entry, "name", row.ARPT_NAME || id, "faa");
     applyField(entry, "city", row.CITY || "", "faa");
     applyField(entry, "county", row.COUNTY_NAME || "", "faa");
@@ -148,6 +241,7 @@ function buildFacilityList() {
       const sources = Array.from(entry.sources).sort().join(";");
       return {
         id: entry.id,
+        state: entry.state || "",
         name: entry.name || entry.id,
         city: entry.city || "",
         county: entry.county || "",
@@ -185,8 +279,8 @@ function buildSourcesMetadata(sourceCounts) {
     {
       key: "faa",
       name: SOURCES.faa.name,
-      file: "data/raw/faa_nasr_2026-01-22_APT_CSV.zip (APT_BASE.csv)",
-      updated: getUpdatedDate(SOURCES.faa.file),
+      file: `data/raw/${SOURCES.faa.fileName} (${SOURCES.faa.inner})`,
+      updated: SOURCES.faa.cycleDate || getUpdatedDate(SOURCES.faa.file),
       total: sourceCounts.faa.total,
       corroborated: sourceCounts.faa.corroborated
     }
@@ -210,10 +304,11 @@ function buildSourcesMetadata(sourceCounts) {
 
 function writeCsv(filePath, facilities) {
   const header =
-    "id,name,city,county,latitude,longitude,type,sources,corroborated";
+    "id,state,name,city,county,latitude,longitude,type,sources,corroborated";
   const lines = facilities.map((facility) => {
     const values = [
       facility.id,
+      facility.state,
       facility.name,
       facility.city,
       facility.county,
