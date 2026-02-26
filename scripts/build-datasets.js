@@ -8,6 +8,26 @@ const RAW_DIR = path.join(ROOT, "data", "raw");
 const OUTPUT_DIR = path.join(ROOT, "data", "us");
 const PUBLIC_OUTPUT_DIR = path.join(ROOT, "public", "data", "us");
 const FAA_ARCHIVE_PATTERN = /^faa_nasr_(\d{4}-\d{2}-\d{2})_APT_CSV\.zip$/i;
+const SURFACE_PRIORITY = {
+  paved: 4,
+  unpaved: 3,
+  water: 2,
+  unknown: 1
+};
+const PAVED_SURFACE_HINTS = ["ASPH", "CON", "BIT", "PEM", "MAC", "PAVE"];
+const UNPAVED_SURFACE_HINTS = [
+  "TURF",
+  "GRASS",
+  "SOD",
+  "DIRT",
+  "EARTH",
+  "CLAY",
+  "GRVL",
+  "GRAV",
+  "SAND",
+  "SNOW",
+  "ICE"
+];
 
 function resolveFaaSource() {
   const candidates = fs
@@ -151,6 +171,77 @@ function parseDecimal(value, hemis) {
   return parsed;
 }
 
+function isTowered(twrTypeCode) {
+  const code = String(twrTypeCode || "").trim().toUpperCase();
+  if (!code) return false;
+  return code !== "NON-ATCT";
+}
+
+function categorizeSurface(surfaceTypeCode) {
+  const code = String(surfaceTypeCode || "").trim().toUpperCase();
+  if (!code) return "unknown";
+  if (code.includes("WATER") || code.includes("WTR")) {
+    return "water";
+  }
+  if (PAVED_SURFACE_HINTS.some((hint) => code.includes(hint))) {
+    return "paved";
+  }
+  if (UNPAVED_SURFACE_HINTS.some((hint) => code.includes(hint))) {
+    return "unpaved";
+  }
+  return "unknown";
+}
+
+function preferSurfaceCategory(existing, next) {
+  if (!next) return existing;
+  if (!existing) return next;
+  return SURFACE_PRIORITY[next] > SURFACE_PRIORITY[existing] ? next : existing;
+}
+
+function buildRunwayStats() {
+  const rows = parseZipCsv(SOURCES.faa.file, "APT_RWY.csv");
+  const stats = new Map();
+
+  for (const row of rows) {
+    if (!STATE_CODES.has(row.STATE_CODE)) continue;
+    if (row.SITE_TYPE_CODE !== "A") continue;
+
+    const id = normalizeId(row.ARPT_ID);
+    if (!id) continue;
+
+    const runwayLength = Number(row.RWY_LEN);
+    const surfaceCategory = categorizeSurface(row.SURFACE_TYPE_CODE);
+    const entry = stats.get(id) || {
+      longestRunwayFt: undefined,
+      surfaceCategory: "unknown"
+    };
+
+    if (Number.isFinite(runwayLength) && runwayLength > 0) {
+      if (
+        entry.longestRunwayFt === undefined ||
+        runwayLength > entry.longestRunwayFt
+      ) {
+        entry.longestRunwayFt = Math.round(runwayLength);
+        entry.surfaceCategory = surfaceCategory;
+      } else {
+        entry.surfaceCategory = preferSurfaceCategory(
+          entry.surfaceCategory,
+          surfaceCategory
+        );
+      }
+    } else {
+      entry.surfaceCategory = preferSurfaceCategory(
+        entry.surfaceCategory,
+        surfaceCategory
+      );
+    }
+
+    stats.set(id, entry);
+  }
+
+  return stats;
+}
+
 function getUpdatedDate(filePath) {
   const match = filePath.match(/(\d{4}-\d{2}-\d{2})/);
   if (match) return match[1];
@@ -166,6 +257,7 @@ function ensureDir(dir) {
 
 function buildFacilityList() {
   const records = new Map();
+  const runwayStats = buildRunwayStats();
 
   const fieldRanks = {
     name: { faa: 0 },
@@ -185,6 +277,9 @@ function buildFacilityList() {
         county: "",
         latitude: undefined,
         longitude: undefined,
+        towered: false,
+        longestRunwayFt: undefined,
+        surfaceCategory: "unknown",
         type: "airport",
         sources: new Set(),
         corroborated: false,
@@ -230,9 +325,16 @@ function buildFacilityList() {
     const lon = parseDecimal(row.LONG_DECIMAL, row.LONG_HEMIS);
     applyField(entry, "latitude", lat, "faa");
     applyField(entry, "longitude", lon, "faa");
+    entry.towered = isTowered(row.TWR_TYPE_CODE);
   }
 
   const entries = Array.from(records.values());
+  for (const entry of entries) {
+    const runway = runwayStats.get(entry.id);
+    if (!runway) continue;
+    entry.longestRunwayFt = runway.longestRunwayFt;
+    entry.surfaceCategory = runway.surfaceCategory;
+  }
   for (const entry of entries) {
     entry.corroborated = entry.sources.size > 1;
   }
@@ -247,6 +349,9 @@ function buildFacilityList() {
         county: entry.county || "",
         latitude: entry.latitude,
         longitude: entry.longitude,
+        towered: entry.towered ? "yes" : "no",
+        longest_runway_ft: entry.longestRunwayFt ?? "",
+        surface_category: entry.surfaceCategory || "unknown",
         type: entry.type || "airport",
         sources,
         corroborated: entry.corroborated ? "yes" : "no"
@@ -304,7 +409,7 @@ function buildSourcesMetadata(sourceCounts) {
 
 function writeCsv(filePath, facilities) {
   const header =
-    "id,state,name,city,county,latitude,longitude,type,sources,corroborated";
+    "id,state,name,city,county,latitude,longitude,towered,longest_runway_ft,surface_category,type,sources,corroborated";
   const lines = facilities.map((facility) => {
     const values = [
       facility.id,
@@ -314,6 +419,9 @@ function writeCsv(filePath, facilities) {
       facility.county,
       facility.latitude ?? "",
       facility.longitude ?? "",
+      facility.towered ?? "",
+      facility.longest_runway_ft ?? "",
+      facility.surface_category ?? "",
       facility.type,
       facility.sources,
       facility.corroborated

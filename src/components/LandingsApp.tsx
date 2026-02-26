@@ -49,6 +49,10 @@ const DOT_RADIUS_MAX = 16;
 const DEFAULT_DOT_RADIUS = 10;
 const PAGE_SIZE = 50;
 const SEARCH_DEBOUNCE_MS = 200;
+const TRIP_PAGE_SIZE = 25;
+const TRIP_DISTANCE_MIN = 25;
+const TRIP_DISTANCE_MAX = 1000;
+const TRIP_DISTANCE_DEFAULT = 250;
 
 const STATE_OPTIONS = [
   { code: "CONUS", name: "Contiguous US" },
@@ -113,6 +117,8 @@ const CONTIGUOUS_STATE_CODES = new Set(
 
 type SortKey = (typeof mapSortOptions)[number]["value"];
 type UnvisitedSortKey = SortKey | "distance";
+type TripSurfaceFilter = "any" | "paved" | "unpaved" | "water";
+type TripTowerFilter = "any" | "towered" | "nontowered";
 
 const sortAccessors: Record<SortKey, (facility: Facility) => string> = {
   id: (facility) => facility.id,
@@ -123,6 +129,27 @@ const sortAccessors: Record<SortKey, (facility: Facility) => string> = {
 const unvisitedSortOptions = [
   ...mapSortOptions,
   { value: "distance", label: "Distance from home" }
+] as const;
+
+const tripSurfaceOptions: Array<{ value: TripSurfaceFilter; label: string }> = [
+  { value: "any", label: "Any surface" },
+  { value: "paved", label: "Paved only" },
+  { value: "unpaved", label: "Unpaved only" },
+  { value: "water", label: "Water only" }
+];
+
+const tripTowerOptions: Array<{ value: TripTowerFilter; label: string }> = [
+  { value: "any", label: "Any tower status" },
+  { value: "towered", label: "Towered only" },
+  { value: "nontowered", label: "Non-towered only" }
+];
+
+const tripRunwayOptions = [
+  { value: 0, label: "Any runway length" },
+  { value: 2500, label: "2,500+ ft" },
+  { value: 3500, label: "3,500+ ft" },
+  { value: 5000, label: "5,000+ ft" },
+  { value: 7000, label: "7,000+ ft" }
 ] as const;
 
 function formatPercent(value: number) {
@@ -143,6 +170,13 @@ function parseFlightDate(value: string): number | null {
 function formatDateLabel(value: number | null) {
   if (!value) return "Unknown date";
   return new Date(value).toLocaleDateString();
+}
+
+function formatSurfaceLabel(value?: string) {
+  if (value === "paved") return "Paved";
+  if (value === "unpaved") return "Unpaved";
+  if (value === "water") return "Water";
+  return "Unknown";
 }
 
 function useDebouncedValue<T>(value: T, delayMs: number) {
@@ -292,6 +326,15 @@ export default function LandingsApp() {
   );
   const [isMapUpdating, setIsMapUpdating] = useState(false);
   const [homeBaseId, setHomeBaseId] = useState<string | null>(null);
+  const [tripMaxDistanceNm, setTripMaxDistanceNm] = useState(
+    TRIP_DISTANCE_DEFAULT
+  );
+  const [tripMinRunwayFt, setTripMinRunwayFt] = useState(2500);
+  const [tripSurfaceFilter, setTripSurfaceFilter] =
+    useState<TripSurfaceFilter>("paved");
+  const [tripTowerFilter, setTripTowerFilter] =
+    useState<TripTowerFilter>("any");
+  const [tripPage, setTripPage] = useState(0);
   const [visitedPage, setVisitedPage] = useState(0);
   const [unvisitedPage, setUnvisitedPage] = useState(0);
   const [mostVisitedSort, setMostVisitedSort] = useState<{
@@ -606,6 +649,11 @@ export default function LandingsApp() {
     return selectedFacilities;
   }, [mapFilter, selectedFacilities, visitedSet]);
 
+  const unvisitedInScope = useMemo(
+    () => selectedFacilities.filter((facility) => !visitedSet.has(facility.id)),
+    [selectedFacilities, visitedSet]
+  );
+
   const visitedFacilities = useMemo(
     () => scopeFilteredFacilities.filter((facility) => visitedSet.has(facility.id)),
     [scopeFilteredFacilities, visitedSet]
@@ -823,6 +871,69 @@ export default function LandingsApp() {
     return sortFacilities(unvisitedFiltered, unvisitedSort);
   }, [homeBaseFacility, unvisitedFiltered, unvisitedSort]);
 
+  const tripPlannerRows = useMemo(() => {
+    if (
+      !homeBaseFacility ||
+      homeBaseFacility.latitude === undefined ||
+      homeBaseFacility.longitude === undefined
+    ) {
+      return [];
+    }
+
+    const base = {
+      latitude: homeBaseFacility.latitude,
+      longitude: homeBaseFacility.longitude
+    };
+
+    return unvisitedInScope
+      .flatMap((facility) => {
+        if (facility.latitude === undefined || facility.longitude === undefined) {
+          return [];
+        }
+        const distanceNm = calculateDistanceNm(base, {
+          latitude: facility.latitude,
+          longitude: facility.longitude
+        });
+        if (distanceNm > tripMaxDistanceNm) return [];
+        if (
+          tripMinRunwayFt > 0 &&
+          (facility.longestRunwayFt === undefined ||
+            facility.longestRunwayFt < tripMinRunwayFt)
+        ) {
+          return [];
+        }
+        if (
+          tripSurfaceFilter !== "any" &&
+          facility.surfaceCategory !== tripSurfaceFilter
+        ) {
+          return [];
+        }
+        if (tripTowerFilter === "towered" && facility.towered !== true) {
+          return [];
+        }
+        if (tripTowerFilter === "nontowered" && facility.towered === true) {
+          return [];
+        }
+        return [{ facility, distanceNm }];
+      })
+      .sort((a, b) => {
+        if (a.distanceNm !== b.distanceNm) {
+          return a.distanceNm - b.distanceNm;
+        }
+        const aRunway = a.facility.longestRunwayFt ?? 0;
+        const bRunway = b.facility.longestRunwayFt ?? 0;
+        if (aRunway !== bRunway) return bRunway - aRunway;
+        return a.facility.id.localeCompare(b.facility.id);
+      });
+  }, [
+    homeBaseFacility,
+    tripMaxDistanceNm,
+    tripMinRunwayFt,
+    tripSurfaceFilter,
+    tripTowerFilter,
+    unvisitedInScope
+  ]);
+
   const visitedPageCount = Math.max(
     1,
     Math.ceil(visitedFiltered.length / PAGE_SIZE)
@@ -831,9 +942,14 @@ export default function LandingsApp() {
     1,
     Math.ceil(unvisitedSorted.length / PAGE_SIZE)
   );
+  const tripPageCount = Math.max(1, Math.ceil(tripPlannerRows.length / TRIP_PAGE_SIZE));
   const visitedPageItems = visitedFiltered.slice(
     visitedPage * PAGE_SIZE,
     visitedPage * PAGE_SIZE + PAGE_SIZE
+  );
+  const tripPageItems = tripPlannerRows.slice(
+    tripPage * TRIP_PAGE_SIZE,
+    tripPage * TRIP_PAGE_SIZE + TRIP_PAGE_SIZE
   );
   const unvisitedPageItems = unvisitedSorted.slice(
     unvisitedPage * PAGE_SIZE,
@@ -1009,6 +1125,17 @@ export default function LandingsApp() {
   }, [debouncedVisitedSearch, mapFilter, visitedSort, selectedState]);
 
   useEffect(() => {
+    setTripPage(0);
+  }, [
+    homeBaseId,
+    selectedState,
+    tripMaxDistanceNm,
+    tripMinRunwayFt,
+    tripSurfaceFilter,
+    tripTowerFilter
+  ]);
+
+  useEffect(() => {
     setUnvisitedPage(0);
   }, [debouncedUnvisitedSearch, mapFilter, unvisitedSort, selectedState, homeBaseId]);
 
@@ -1054,6 +1181,17 @@ export default function LandingsApp() {
               Upload your ForeFlight logbook and see every public airport you have
               visited across the United States.
             </p>
+            <div className="flex flex-wrap gap-2 text-xs text-ink/70">
+              <span className="rounded-full border border-ink/10 bg-white px-3 py-1">
+                1. Upload ForeFlight CSV
+              </span>
+              <span className="rounded-full border border-ink/10 bg-white px-3 py-1">
+                2. Pick your home base
+              </span>
+              <span className="rounded-full border border-ink/10 bg-white px-3 py-1">
+                3. Plan next airports
+              </span>
+            </div>
           </div>
 
           {isDemo && (
@@ -1075,7 +1213,7 @@ export default function LandingsApp() {
             }`}
           >
             <div className="flex flex-wrap gap-3">
-              <label className="inline-flex w-[260px] cursor-pointer items-center justify-center rounded-2xl border border-ink/10 bg-pine px-4 py-3 text-sm font-semibold text-bone shadow-card">
+              <label className="inline-flex min-h-[44px] w-[260px] cursor-pointer items-center justify-center rounded-2xl border border-ink/10 bg-pine px-4 py-3 text-sm font-semibold text-bone shadow-card">
                 <input
                   type="file"
                   accept=".csv"
@@ -1087,14 +1225,14 @@ export default function LandingsApp() {
               <button
                 type="button"
                 onClick={handleDemoFill}
-                className="inline-flex w-[260px] items-center justify-center rounded-2xl border border-ink/10 bg-pine px-4 py-3 text-sm font-semibold text-bone shadow-card"
+                className="inline-flex min-h-[44px] w-[260px] items-center justify-center rounded-2xl border border-ink/10 bg-pine px-4 py-3 text-sm font-semibold text-bone shadow-card"
               >
                 Try demo logbook
               </button>
               <button
                 type="button"
                 onClick={handleClearData}
-                className="inline-flex items-center justify-center rounded-2xl border border-ink/10 px-4 py-3 text-xs font-semibold text-ink/70"
+                className="inline-flex min-h-[44px] items-center justify-center rounded-2xl border border-ink/10 px-4 py-3 text-xs font-semibold text-ink/70"
               >
                 Clear data &amp; reset demo
               </button>
@@ -1403,243 +1541,434 @@ export default function LandingsApp() {
           )}
 
           {!showReportsEmpty && (
-            <div className="grid gap-6 lg:grid-cols-2">
-            <div className="rounded-3xl border border-ink/10 bg-white p-6 shadow-card">
-              <details open>
-                <summary className="font-display text-lg text-ink">
-                  Visited Airports ({visitedFiltered.length})
-                </summary>
-                <div className="mt-4 space-y-4">
-                  <div className="flex flex-wrap gap-3">
-                    <input
-                      type="search"
-                      placeholder="Search by ID, name, city"
-                      className="flex-1 rounded-xl border border-ink/10 px-3 py-2 text-sm"
-                      value={visitedSearch}
-                      onChange={(event) => {
-                        setVisitedSearch(event.target.value);
-                        setVisitedPage(0);
-                      }}
-                    />
-                    <select
-                      className="rounded-xl border border-ink/10 px-3 py-2 text-sm"
-                      value={visitedSort}
-                      onChange={(event) =>
-                        setVisitedSort(event.target.value as SortKey)
-                      }
-                    >
-                      {mapSortOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          Sort by {option.label}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      onClick={handleExportVisitedCsv}
-                      className="rounded-xl border border-ink/10 bg-white px-3 py-2 text-sm font-semibold text-ink shadow-card"
-                    >
-                      Export visited list as CSV
-                    </button>
-                  </div>
-                  <div className="max-h-[320px] overflow-y-auto rounded-2xl border border-ink/10">
-                    <table className="w-full text-left text-sm">
-                      <thead className="sticky top-0 z-10 bg-white text-xs uppercase text-ink/50">
-                        <tr>
-                          <th className="px-3 py-2">Airport</th>
-                          <th className="px-3 py-2">Name</th>
-                          <th className="px-3 py-2">City/County</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {visitedPageItems.map((facility) => (
-                          <tr key={facility.id} className="border-t border-ink/10">
-                            <td className="px-3 py-2 font-medium">
-                              {facility.id}
-                            </td>
-                            <td className="px-3 py-2">{facility.name}</td>
-                            <td className="px-3 py-2">
-                              {facility.city || facility.county}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    {visitedFiltered.length === 0 && (
-                      <p className="px-3 py-4 text-sm text-ink/60">
-                        No visited airports match this search in {scopeLabel}.
-                      </p>
-                    )}
-                  </div>
-                  <div className="flex items-center justify-end gap-3 text-xs text-ink/60">
-                    <span>
-                      Page {visitedPage + 1} of {visitedPageCount}
-                    </span>
-                    <button
-                      type="button"
-                      className="rounded-full border border-ink/10 px-3 py-1 disabled:opacity-40"
-                      onClick={() =>
-                        setVisitedPage((page) => Math.max(0, page - 1))
-                      }
-                      disabled={visitedPage === 0}
-                      aria-label="Previous visited page"
-                    >
-                      Previous
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded-full border border-ink/10 px-3 py-1 disabled:opacity-40"
-                      onClick={() =>
-                        setVisitedPage((page) =>
-                          Math.min(visitedPageCount - 1, page + 1)
-                        )
-                      }
-                      disabled={visitedPage >= visitedPageCount - 1}
-                      aria-label="Next visited page"
-                    >
-                      Next
-                    </button>
-                  </div>
-                </div>
-              </details>
-            </div>
+            <>
+              <div className="rounded-3xl border border-ink/10 bg-white p-6 shadow-card">
+                <details open>
+                  <summary className="font-display text-lg text-ink">
+                    Trip Planner ({tripPlannerRows.length})
+                  </summary>
+                  <div className="mt-4 space-y-4">
+                    <p className="text-sm text-ink/70">
+                      Find your next airports near home base using distance, runway,
+                      surface, and tower filters.
+                    </p>
 
-            <div className="rounded-3xl border border-ink/10 bg-white p-6 shadow-card">
-              <details open>
-                <summary className="font-display text-lg text-ink">
-                  Unvisited Airports ({unvisitedSorted.length})
-                </summary>
-                <div className="mt-4 space-y-4">
-                  <div className="flex flex-wrap gap-3">
-                    <input
-                      type="search"
-                      placeholder="Search by ID, name, city"
-                      className="flex-1 rounded-xl border border-ink/10 px-3 py-2 text-sm"
-                      value={unvisitedSearch}
-                      onChange={(event) => {
-                        setUnvisitedSearch(event.target.value);
-                        setUnvisitedPage(0);
-                      }}
-                    />
-                    <select
-                      className="rounded-xl border border-ink/10 px-3 py-2 text-sm"
-                      value={unvisitedSort}
-                      onChange={(event) =>
-                        setUnvisitedSort(event.target.value as UnvisitedSortKey)
-                      }
-                    >
-                      {unvisitedSortOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          Sort by {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <label className="flex flex-wrap items-center gap-3 text-sm text-ink/70">
-                    <span className="min-w-[140px]">Home base airport</span>
-                    <select
-                      className="flex-1 rounded-xl border border-ink/10 px-3 py-2 text-sm"
-                      value={homeBaseId || ""}
-                      onChange={(event) => setHomeBaseId(event.target.value || null)}
-                      disabled={homeBaseOptions.length === 0}
-                      aria-label={`Home base airport ${homeBaseId || ""}`}
-                    >
-                      {homeBaseOptions.length === 0 && (
-                        <option value="">No visited airports yet</option>
-                      )}
-                      {homeBaseOptions.map((option) => (
-                        <option key={option.id} value={option.id}>
-                          {option.id} — {option.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <div className="max-h-[320px] overflow-y-auto rounded-2xl border border-ink/10">
-                    <table className="w-full text-left text-sm">
-                      <thead className="sticky top-0 z-10 bg-white text-xs uppercase text-ink/50">
-                        <tr>
-                          <th className="px-3 py-2">Airport</th>
-                          <th className="px-3 py-2">Name</th>
-                          <th className="px-3 py-2">City/County</th>
-                          <th className="px-3 py-2">Distance from home</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {unvisitedPageItems.map((facility) => {
-                          let distanceLabel = "—";
-                          if (
-                            homeBaseFacility &&
-                            homeBaseFacility.latitude !== undefined &&
-                            homeBaseFacility.longitude !== undefined &&
-                            facility.latitude !== undefined &&
-                            facility.longitude !== undefined
-                          ) {
-                            const distance = calculateDistanceNm(
-                              {
-                                latitude: homeBaseFacility.latitude,
-                                longitude: homeBaseFacility.longitude
-                              },
-                              {
-                                latitude: facility.latitude,
-                                longitude: facility.longitude
-                              }
-                            );
-                            distanceLabel = `${Math.round(distance)} nm`;
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                      <label className="flex flex-col gap-2 text-sm text-ink/70">
+                        <span className="font-medium text-ink">Home base airport</span>
+                        <select
+                          className="min-h-[44px] rounded-xl border border-ink/10 px-3 py-2 text-sm"
+                          value={homeBaseId || ""}
+                          onChange={(event) =>
+                            setHomeBaseId(event.target.value || null)
                           }
-                          return (
-                          <tr key={facility.id} className="border-t border-ink/10">
-                            <td className="px-3 py-2 font-medium">
-                              {facility.id}
-                            </td>
-                            <td className="px-3 py-2">{facility.name}</td>
-                            <td className="px-3 py-2">
-                              {facility.city || facility.county}
-                            </td>
-                            <td className="px-3 py-2">{distanceLabel}</td>
-                          </tr>
-                        );
-                        })}
-                      </tbody>
-                    </table>
-                    {unvisitedSorted.length === 0 && (
-                      <p className="px-3 py-4 text-sm text-ink/60">
-                        No unvisited airports match this search in {scopeLabel}.
+                          disabled={homeBaseOptions.length === 0}
+                          aria-label={`Trip planner home base ${homeBaseId || ""}`}
+                        >
+                          {homeBaseOptions.length === 0 && (
+                            <option value="">No visited airports yet</option>
+                          )}
+                          {homeBaseOptions.map((option) => (
+                            <option key={option.id} value={option.id}>
+                              {option.id} — {option.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <label className="flex flex-col gap-2 text-sm text-ink/70">
+                        <span className="font-medium text-ink">
+                          Max distance ({tripMaxDistanceNm} nm)
+                        </span>
+                        <input
+                          type="range"
+                          min={TRIP_DISTANCE_MIN}
+                          max={TRIP_DISTANCE_MAX}
+                          step={25}
+                          value={tripMaxDistanceNm}
+                          onChange={(event) =>
+                            setTripMaxDistanceNm(Number(event.target.value))
+                          }
+                          className="min-h-[44px] accent-pine"
+                          aria-label="Trip planner maximum distance"
+                        />
+                      </label>
+
+                      <label className="flex flex-col gap-2 text-sm text-ink/70">
+                        <span className="font-medium text-ink">Minimum runway</span>
+                        <select
+                          className="min-h-[44px] rounded-xl border border-ink/10 px-3 py-2 text-sm"
+                          value={tripMinRunwayFt}
+                          onChange={(event) =>
+                            setTripMinRunwayFt(Number(event.target.value))
+                          }
+                        >
+                          {tripRunwayOptions.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <label className="flex flex-col gap-2 text-sm text-ink/70">
+                        <span className="font-medium text-ink">Surface</span>
+                        <select
+                          className="min-h-[44px] rounded-xl border border-ink/10 px-3 py-2 text-sm"
+                          value={tripSurfaceFilter}
+                          onChange={(event) =>
+                            setTripSurfaceFilter(
+                              event.target.value as TripSurfaceFilter
+                            )
+                          }
+                        >
+                          {tripSurfaceOptions.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <label className="flex flex-col gap-2 text-sm text-ink/70">
+                        <span className="font-medium text-ink">Tower status</span>
+                        <select
+                          className="min-h-[44px] rounded-xl border border-ink/10 px-3 py-2 text-sm"
+                          value={tripTowerFilter}
+                          onChange={(event) =>
+                            setTripTowerFilter(event.target.value as TripTowerFilter)
+                          }
+                        >
+                          {tripTowerOptions.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+
+                    {homeBaseOptions.length === 0 ? (
+                      <p className="rounded-2xl border border-ink/10 bg-bone px-4 py-3 text-sm text-ink/70">
+                        Pick up some visited airports first, then this planner will
+                        suggest nearby new targets.
                       </p>
+                    ) : !homeBaseFacility ||
+                      homeBaseFacility.latitude === undefined ||
+                      homeBaseFacility.longitude === undefined ? (
+                      <p className="rounded-2xl border border-ink/10 bg-bone px-4 py-3 text-sm text-ink/70">
+                        Select a home base with known coordinates to use trip planning.
+                      </p>
+                    ) : (
+                      <>
+                        <div className="text-xs text-ink/60">
+                          Showing closest matching unvisited airports in {scopeLabel}.
+                        </div>
+                        <div className="max-h-[360px] overflow-y-auto overflow-x-auto rounded-2xl border border-ink/10">
+                          <table className="w-full text-left text-sm">
+                            <thead className="sticky top-0 z-10 bg-white text-xs uppercase text-ink/50">
+                              <tr>
+                                <th className="px-3 py-2">Airport</th>
+                                <th className="px-3 py-2">Name</th>
+                                <th className="px-3 py-2">Distance</th>
+                                <th className="px-3 py-2">Runway</th>
+                                <th className="px-3 py-2">Surface</th>
+                                <th className="px-3 py-2">Towered</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {tripPageItems.map(({ facility, distanceNm }) => (
+                                <tr key={facility.id} className="border-t border-ink/10">
+                                  <td className="px-3 py-2 font-medium">{facility.id}</td>
+                                  <td className="px-3 py-2">
+                                    {facility.name}
+                                    <div className="text-xs text-ink/60">
+                                      {facility.city || facility.county || "Unknown"}
+                                    </div>
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    {Math.round(distanceNm)} nm
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    {facility.longestRunwayFt
+                                      ? `${facility.longestRunwayFt.toLocaleString()} ft`
+                                      : "—"}
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    {formatSurfaceLabel(facility.surfaceCategory)}
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    {facility.towered === true
+                                      ? "Yes"
+                                      : facility.towered === false
+                                        ? "No"
+                                        : "Unknown"}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {tripPlannerRows.length === 0 && (
+                            <p className="px-3 py-4 text-sm text-ink/60">
+                              No airports match your trip filters. Increase distance or
+                              relax runway/surface filters.
+                            </p>
+                          )}
+                        </div>
+                        <div className="flex items-center justify-end gap-3 text-xs text-ink/60">
+                          <span>
+                            Page {tripPage + 1} of {tripPageCount}
+                          </span>
+                          <button
+                            type="button"
+                            className="rounded-full border border-ink/10 px-3 py-1 disabled:opacity-40"
+                            onClick={() =>
+                              setTripPage((page) => Math.max(0, page - 1))
+                            }
+                            disabled={tripPage === 0}
+                            aria-label="Previous trip planner page"
+                          >
+                            Previous
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded-full border border-ink/10 px-3 py-1 disabled:opacity-40"
+                            onClick={() =>
+                              setTripPage((page) =>
+                                Math.min(tripPageCount - 1, page + 1)
+                              )
+                            }
+                            disabled={tripPage >= tripPageCount - 1}
+                            aria-label="Next trip planner page"
+                          >
+                            Next
+                          </button>
+                        </div>
+                      </>
                     )}
                   </div>
-                  <div className="flex items-center justify-end gap-3 text-xs text-ink/60">
-                    <span>
-                      Page {unvisitedPage + 1} of {unvisitedPageCount}
-                    </span>
-                    <button
-                      type="button"
-                      className="rounded-full border border-ink/10 px-3 py-1 disabled:opacity-40"
-                      onClick={() =>
-                        setUnvisitedPage((page) => Math.max(0, page - 1))
-                      }
-                      disabled={unvisitedPage === 0}
-                      aria-label="Previous unvisited page"
-                    >
-                      Previous
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded-full border border-ink/10 px-3 py-1 disabled:opacity-40"
-                      onClick={() =>
-                        setUnvisitedPage((page) =>
-                          Math.min(unvisitedPageCount - 1, page + 1)
-                        )
-                      }
-                      disabled={unvisitedPage >= unvisitedPageCount - 1}
-                      aria-label="Next unvisited page"
-                    >
-                      Next
-                    </button>
-                  </div>
+                </details>
+              </div>
+
+              <div className="grid gap-6 lg:grid-cols-2">
+                <div className="rounded-3xl border border-ink/10 bg-white p-6 shadow-card">
+                  <details open>
+                    <summary className="font-display text-lg text-ink">
+                      Visited Airports ({visitedFiltered.length})
+                    </summary>
+                    <div className="mt-4 space-y-4">
+                      <div className="flex flex-wrap gap-3">
+                        <input
+                          type="search"
+                          placeholder="Search by ID, name, city"
+                          className="min-h-[44px] flex-1 rounded-xl border border-ink/10 px-3 py-2 text-sm"
+                          value={visitedSearch}
+                          onChange={(event) => {
+                            setVisitedSearch(event.target.value);
+                            setVisitedPage(0);
+                          }}
+                        />
+                        <select
+                          className="min-h-[44px] rounded-xl border border-ink/10 px-3 py-2 text-sm"
+                          value={visitedSort}
+                          onChange={(event) =>
+                            setVisitedSort(event.target.value as SortKey)
+                          }
+                        >
+                          {mapSortOptions.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              Sort by {option.label}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={handleExportVisitedCsv}
+                          className="min-h-[44px] rounded-xl border border-ink/10 bg-white px-3 py-2 text-sm font-semibold text-ink shadow-card"
+                        >
+                          Export visited list as CSV
+                        </button>
+                      </div>
+                      <div className="max-h-[320px] overflow-y-auto rounded-2xl border border-ink/10">
+                        <table className="w-full text-left text-sm">
+                          <thead className="sticky top-0 z-10 bg-white text-xs uppercase text-ink/50">
+                            <tr>
+                              <th className="px-3 py-2">Airport</th>
+                              <th className="px-3 py-2">Name</th>
+                              <th className="px-3 py-2">City/County</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {visitedPageItems.map((facility) => (
+                              <tr key={facility.id} className="border-t border-ink/10">
+                                <td className="px-3 py-2 font-medium">
+                                  {facility.id}
+                                </td>
+                                <td className="px-3 py-2">{facility.name}</td>
+                                <td className="px-3 py-2">
+                                  {facility.city || facility.county}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        {visitedFiltered.length === 0 && (
+                          <p className="px-3 py-4 text-sm text-ink/60">
+                            No visited airports match this search in {scopeLabel}.
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex items-center justify-end gap-3 text-xs text-ink/60">
+                        <span>
+                          Page {visitedPage + 1} of {visitedPageCount}
+                        </span>
+                        <button
+                          type="button"
+                          className="rounded-full border border-ink/10 px-3 py-1 disabled:opacity-40"
+                          onClick={() =>
+                            setVisitedPage((page) => Math.max(0, page - 1))
+                          }
+                          disabled={visitedPage === 0}
+                          aria-label="Previous visited page"
+                        >
+                          Previous
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-full border border-ink/10 px-3 py-1 disabled:opacity-40"
+                          onClick={() =>
+                            setVisitedPage((page) =>
+                              Math.min(visitedPageCount - 1, page + 1)
+                            )
+                          }
+                          disabled={visitedPage >= visitedPageCount - 1}
+                          aria-label="Next visited page"
+                        >
+                          Next
+                        </button>
+                      </div>
+                    </div>
+                  </details>
                 </div>
-              </details>
-            </div>
-            </div>
+
+                <div className="rounded-3xl border border-ink/10 bg-white p-6 shadow-card">
+                  <details open>
+                    <summary className="font-display text-lg text-ink">
+                      Unvisited Airports ({unvisitedSorted.length})
+                    </summary>
+                    <div className="mt-4 space-y-4">
+                      <div className="flex flex-wrap gap-3">
+                        <input
+                          type="search"
+                          placeholder="Search by ID, name, city"
+                          className="min-h-[44px] flex-1 rounded-xl border border-ink/10 px-3 py-2 text-sm"
+                          value={unvisitedSearch}
+                          onChange={(event) => {
+                            setUnvisitedSearch(event.target.value);
+                            setUnvisitedPage(0);
+                          }}
+                        />
+                        <select
+                          className="min-h-[44px] rounded-xl border border-ink/10 px-3 py-2 text-sm"
+                          value={unvisitedSort}
+                          onChange={(event) =>
+                            setUnvisitedSort(event.target.value as UnvisitedSortKey)
+                          }
+                        >
+                          {unvisitedSortOptions.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              Sort by {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="max-h-[320px] overflow-y-auto rounded-2xl border border-ink/10">
+                        <table className="w-full text-left text-sm">
+                          <thead className="sticky top-0 z-10 bg-white text-xs uppercase text-ink/50">
+                            <tr>
+                              <th className="px-3 py-2">Airport</th>
+                              <th className="px-3 py-2">Name</th>
+                              <th className="px-3 py-2">City/County</th>
+                              <th className="px-3 py-2">Distance from home</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {unvisitedPageItems.map((facility) => {
+                              let distanceLabel = "—";
+                              if (
+                                homeBaseFacility &&
+                                homeBaseFacility.latitude !== undefined &&
+                                homeBaseFacility.longitude !== undefined &&
+                                facility.latitude !== undefined &&
+                                facility.longitude !== undefined
+                              ) {
+                                const distance = calculateDistanceNm(
+                                  {
+                                    latitude: homeBaseFacility.latitude,
+                                    longitude: homeBaseFacility.longitude
+                                  },
+                                  {
+                                    latitude: facility.latitude,
+                                    longitude: facility.longitude
+                                  }
+                                );
+                                distanceLabel = `${Math.round(distance)} nm`;
+                              }
+                              return (
+                                <tr key={facility.id} className="border-t border-ink/10">
+                                  <td className="px-3 py-2 font-medium">
+                                    {facility.id}
+                                  </td>
+                                  <td className="px-3 py-2">{facility.name}</td>
+                                  <td className="px-3 py-2">
+                                    {facility.city || facility.county}
+                                  </td>
+                                  <td className="px-3 py-2">{distanceLabel}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                        {unvisitedSorted.length === 0 && (
+                          <p className="px-3 py-4 text-sm text-ink/60">
+                            No unvisited airports match this search in {scopeLabel}.
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex items-center justify-end gap-3 text-xs text-ink/60">
+                        <span>
+                          Page {unvisitedPage + 1} of {unvisitedPageCount}
+                        </span>
+                        <button
+                          type="button"
+                          className="rounded-full border border-ink/10 px-3 py-1 disabled:opacity-40"
+                          onClick={() =>
+                            setUnvisitedPage((page) => Math.max(0, page - 1))
+                          }
+                          disabled={unvisitedPage === 0}
+                          aria-label="Previous unvisited page"
+                        >
+                          Previous
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-full border border-ink/10 px-3 py-1 disabled:opacity-40"
+                          onClick={() =>
+                            setUnvisitedPage((page) =>
+                              Math.min(unvisitedPageCount - 1, page + 1)
+                            )
+                          }
+                          disabled={unvisitedPage >= unvisitedPageCount - 1}
+                          aria-label="Next unvisited page"
+                        >
+                          Next
+                        </button>
+                      </div>
+                    </div>
+                  </details>
+                </div>
+              </div>
+            </>
           )}
         </section>
 

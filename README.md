@@ -1,6 +1,6 @@
 # Landings
 
-Landing coverage for ForeFlight logbooks across US public airports.
+Landing coverage and trip planning for ForeFlight logbooks across US public airports.
 
 ## Run locally
 
@@ -33,7 +33,7 @@ This runs lint, tests, and production build locally. The same checks run in CI o
 
 ## Data sources
 
-- FAA NASR APT_BASE (US public airports) -> `data/us/facilities_master.csv`
+- FAA NASR APT_BASE + APT_RWY (US public airports) -> `data/us/facilities_master.csv`
 - Raw source inputs live under `data/raw`
 
 ### Rebuild the master list
@@ -54,6 +54,12 @@ To refresh data for a new FAA cycle:
 1. Download the FAA NASR APT CSV ZIP and place it under `data/raw`.
 2. Name it `faa_nasr_YYYY-MM-DD_APT_CSV.zip`.
 3. Run `npm run build:data`.
+
+The builder now enriches each airport with:
+
+- Towered status
+- Longest runway length (ft)
+- Surface category (`paved`, `unpaved`, `water`, or `unknown`)
 
 ## Deployment
 

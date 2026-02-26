@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 const metaTitle = "Landings – US Landings from your ForeFlight logbook";
@@ -7,8 +7,15 @@ const metaDescription =
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://landingbadge.com"),
+  applicationName: "Landings",
   title: metaTitle,
   description: metaDescription,
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    title: "Landings",
+    statusBarStyle: "default"
+  },
   openGraph: {
     title: metaTitle,
     description: metaDescription,
@@ -32,6 +39,10 @@ export const metadata: Metadata = {
     icon: "/favicon.svg",
     apple: "/apple-touch-icon.svg"
   }
+};
+
+export const viewport: Viewport = {
+  themeColor: "#0f172a"
 };
 
 export default function RootLayout({

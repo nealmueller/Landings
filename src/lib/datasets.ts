@@ -1,6 +1,8 @@
 import Papa from "papaparse";
 import { normalizeFacilityId } from "@/lib/normalize";
 
+export type SurfaceCategory = "paved" | "unpaved" | "water" | "unknown";
+
 export type Facility = {
   id: string;
   state?: string;
@@ -9,6 +11,9 @@ export type Facility = {
   county: string;
   latitude?: number;
   longitude?: number;
+  towered?: boolean;
+  longestRunwayFt?: number;
+  surfaceCategory?: SurfaceCategory;
   source: "public" | "ourairports";
   type?: string;
   sources?: string;
@@ -36,6 +41,30 @@ export function parseFacilitiesMaster(csvText: string): Facility[] {
       row.longitude || row.LONGITUDE || row.LON || row.LONG || ""
     );
     const state = (row.state || row.STATE || row.STATE_CODE || "").trim();
+    const longestRunwayFt = parseFloat(
+      row.longest_runway_ft || row.LONGEST_RUNWAY_FT || ""
+    );
+    const surfaceValue = (
+      row.surface_category ||
+      row.SURFACE_CATEGORY ||
+      ""
+    )
+      .trim()
+      .toLowerCase();
+    const toweredValue = (row.towered || row.TOWERED || "").trim().toLowerCase();
+    const towered =
+      toweredValue === "yes" || toweredValue === "true"
+        ? true
+        : toweredValue === "no" || toweredValue === "false"
+          ? false
+          : undefined;
+    const surfaceCategory =
+      surfaceValue === "paved" ||
+      surfaceValue === "unpaved" ||
+      surfaceValue === "water" ||
+      surfaceValue === "unknown"
+        ? (surfaceValue as SurfaceCategory)
+        : undefined;
 
     return [
       {
@@ -46,6 +75,11 @@ export function parseFacilitiesMaster(csvText: string): Facility[] {
         county: county.trim(),
         latitude: Number.isFinite(latitude) ? latitude : undefined,
         longitude: Number.isFinite(longitude) ? longitude : undefined,
+        towered,
+        longestRunwayFt: Number.isFinite(longestRunwayFt)
+          ? longestRunwayFt
+          : undefined,
+        surfaceCategory,
         source: "public",
         type: row.type,
         sources: row.sources,
