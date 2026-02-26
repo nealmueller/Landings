@@ -13,6 +13,25 @@ body {
   @apply bg-bone text-ink antialiased;
 }
 
+button,
+select,
+input[type="search"] {
+  min-height: 44px;
+}
+
+:focus-visible {
+  outline: 2px solid #0b2f8f;
+  outline-offset: 2px;
+}
+
+@supports (padding: env(safe-area-inset-top)) {
+  body {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
 ::selection {
   background: #f9c971;
   color: #121417;

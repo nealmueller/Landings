@@ -11,12 +11,68 @@ export type FacilityMatch = {
 };
 
 const BRAVO_EXCLUSIONS = new Set(["SFO", "LAX", "SAN"]);
+const COORDINATE_ENDPOINT_MAX_DISTANCE_NM = 10;
 
 const PRIVATE_TYPES = new Set([
   "small_airport",
   "medium_airport",
   "large_airport"
 ]);
+
+type CoordinatePoint = {
+  latitude: number;
+  longitude: number;
+};
+
+function toRadians(value: number): number {
+  return (value * Math.PI) / 180;
+}
+
+function distanceNm(from: CoordinatePoint, to: CoordinatePoint): number {
+  const radiusNm = 3440.065;
+  const dLat = toRadians(to.latitude - from.latitude);
+  const dLon = toRadians(to.longitude - from.longitude);
+  const lat1 = toRadians(from.latitude);
+  const lat2 = toRadians(to.latitude);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return radiusNm * c;
+}
+
+function parseCoordinateEndpoint(value: string): CoordinatePoint | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  const hemiMatch = trimmed.match(
+    /^(\d{1,2}(?:\.\d+)?)\s*°?\s*([NS])\s*[/,]\s*(\d{1,3}(?:\.\d+)?)\s*°?\s*([EW])$/i
+  );
+  if (hemiMatch) {
+    const latMag = Number(hemiMatch[1]);
+    const latHemi = hemiMatch[2].toUpperCase();
+    const lonMag = Number(hemiMatch[3]);
+    const lonHemi = hemiMatch[4].toUpperCase();
+    if (!Number.isFinite(latMag) || !Number.isFinite(lonMag)) return null;
+    const latitude = latHemi === "S" ? -latMag : latMag;
+    const longitude = lonHemi === "W" ? -lonMag : lonMag;
+    if (Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return null;
+    return { latitude, longitude };
+  }
+
+  const signedMatch = trimmed.match(
+    /^([-+]?\d{1,2}(?:\.\d+)?)\s*[,/]\s*([-+]?\d{1,3}(?:\.\d+)?)$/
+  );
+  if (signedMatch) {
+    const latitude = Number(signedMatch[1]);
+    const longitude = Number(signedMatch[2]);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+    if (Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return null;
+    return { latitude, longitude };
+  }
+
+  return null;
+}
 
 export function applyBravoExclusion(ids: Set<string>, enabled: boolean): Set<string> {
   if (!enabled) return ids;
@@ -107,9 +163,18 @@ export function enrichPublicFacilities(
 
 export function computeFacilityMatches(
   flights: FlightRow[],
-  facilityIds: Set<string>
+  facilityIds: Set<string>,
+  facilitiesById?: Map<string, Facility>
 ): Map<string, FacilityMatch> {
   const matches = new Map<string, FacilityMatch>();
+  const coordinateCandidates = facilitiesById
+    ? Array.from(facilitiesById.values()).filter(
+        (facility) =>
+          facilityIds.has(facility.id) &&
+          facility.latitude !== undefined &&
+          facility.longitude !== undefined
+      )
+    : [];
 
   const addMatch = (id: string, source: SourceType) => {
     if (!facilityIds.has(id)) return;
@@ -121,12 +186,50 @@ export function computeFacilityMatches(
     matches.set(id, entry);
   };
 
-  for (const flight of flights) {
-    const from = normalizeFacilityId(flight.from || "");
-    if (from) addMatch(from, "endpoint_from");
+  const addCoordinateEndpointMatch = (value: string, source: SourceType) => {
+    if (coordinateCandidates.length === 0) return;
+    const coordinate = parseCoordinateEndpoint(value);
+    if (!coordinate) return;
 
-    const to = normalizeFacilityId(flight.to || "");
+    let nearestId: string | null = null;
+    let nearestDistance = Infinity;
+
+    for (const facility of coordinateCandidates) {
+      const distance = distanceNm(coordinate, {
+        latitude: facility.latitude!,
+        longitude: facility.longitude!
+      });
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestId = facility.id;
+      }
+    }
+
+    if (
+      nearestId &&
+      Number.isFinite(nearestDistance) &&
+      nearestDistance <= COORDINATE_ENDPOINT_MAX_DISTANCE_NM
+    ) {
+      addMatch(nearestId, source);
+    }
+  };
+
+  for (const flight of flights) {
+    const rawFrom = flight.from || "";
+    const from = normalizeFacilityId(rawFrom);
+    const fromMatched = Boolean(from && facilityIds.has(from));
+    if (from) addMatch(from, "endpoint_from");
+    if (!fromMatched) {
+      addCoordinateEndpointMatch(rawFrom, "endpoint_from");
+    }
+
+    const rawTo = flight.to || "";
+    const to = normalizeFacilityId(rawTo);
+    const toMatched = Boolean(to && facilityIds.has(to));
     if (to) addMatch(to, "endpoint_to");
+    if (!toMatched) {
+      addCoordinateEndpointMatch(rawTo, "endpoint_to");
+    }
 
     for (const field of flight.textFields) {
       const tokens = tokenizeText(field);

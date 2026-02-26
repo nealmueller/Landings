@@ -146,10 +146,13 @@ const tripTowerOptions: Array<{ value: TripTowerFilter; label: string }> = [
 
 const tripRunwayOptions = [
   { value: 0, label: "Any runway length" },
+  { value: 800, label: "800+ ft" },
+  { value: 1000, label: "1,000+ ft" },
+  { value: 1200, label: "1,200+ ft" },
+  { value: 1500, label: "1,500+ ft" },
+  { value: 2000, label: "2,000+ ft" },
   { value: 2500, label: "2,500+ ft" },
-  { value: 3500, label: "3,500+ ft" },
-  { value: 5000, label: "5,000+ ft" },
-  { value: 7000, label: "7,000+ ft" }
+  { value: 3500, label: "3,500+ ft" }
 ] as const;
 
 function formatPercent(value: number) {
@@ -177,6 +180,11 @@ function formatSurfaceLabel(value?: string) {
   if (value === "unpaved") return "Unpaved";
   if (value === "water") return "Water";
   return "Unknown";
+}
+
+function getPlannedRunwayFt(lengthFt?: number): number | undefined {
+  if (!lengthFt || !Number.isFinite(lengthFt)) return undefined;
+  return Math.max(0, Math.round(lengthFt * 0.75));
 }
 
 function useDebouncedValue<T>(value: T, delayMs: number) {
@@ -329,7 +337,7 @@ export default function LandingsApp() {
   const [tripMaxDistanceNm, setTripMaxDistanceNm] = useState(
     TRIP_DISTANCE_DEFAULT
   );
-  const [tripMinRunwayFt, setTripMinRunwayFt] = useState(2500);
+  const [tripMinRunwayFt, setTripMinRunwayFt] = useState(800);
   const [tripSurfaceFilter, setTripSurfaceFilter] =
     useState<TripSurfaceFilter>("paved");
   const [tripTowerFilter, setTripTowerFilter] =
@@ -625,8 +633,8 @@ export default function LandingsApp() {
   }, [facilityById, homeBaseId]);
 
   const matches = useMemo(
-    () => computeFacilityMatches(flights, facilityIds),
-    [flights, facilityIds]
+    () => computeFacilityMatches(flights, facilityIds, facilityById),
+    [flights, facilityById, facilityIds]
   );
 
   const visitedSet = useMemo(
@@ -897,8 +905,8 @@ export default function LandingsApp() {
         if (distanceNm > tripMaxDistanceNm) return [];
         if (
           tripMinRunwayFt > 0 &&
-          (facility.longestRunwayFt === undefined ||
-            facility.longestRunwayFt < tripMinRunwayFt)
+          (getPlannedRunwayFt(facility.longestRunwayFt) === undefined ||
+            getPlannedRunwayFt(facility.longestRunwayFt)! < tripMinRunwayFt)
         ) {
           return [];
         }
@@ -920,8 +928,8 @@ export default function LandingsApp() {
         if (a.distanceNm !== b.distanceNm) {
           return a.distanceNm - b.distanceNm;
         }
-        const aRunway = a.facility.longestRunwayFt ?? 0;
-        const bRunway = b.facility.longestRunwayFt ?? 0;
+        const aRunway = getPlannedRunwayFt(a.facility.longestRunwayFt) ?? 0;
+        const bRunway = getPlannedRunwayFt(b.facility.longestRunwayFt) ?? 0;
         if (aRunway !== bRunway) return bRunway - aRunway;
         return a.facility.id.localeCompare(b.facility.id);
       });
@@ -1141,8 +1149,8 @@ export default function LandingsApp() {
 
   return (
     <div className="min-h-screen bg-bone" id="top">
-      <div className="mx-auto flex max-w-6xl flex-col gap-12 px-6 py-12">
-        <nav className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="mx-auto flex max-w-7xl flex-col gap-8 px-4 py-6 sm:px-6 sm:py-10 lg:px-8">
+        <nav className="sticky top-2 z-20 flex flex-col gap-3 rounded-2xl border border-ink/10 bg-white/85 px-4 py-3 shadow-card backdrop-blur sm:flex-row sm:items-center sm:justify-between">
           <a
             href="#top"
             className="font-display text-xl text-ink hover:text-ink/80"
@@ -1168,7 +1176,7 @@ export default function LandingsApp() {
         </nav>
 
         <section
-          className="grid gap-10 rounded-[32px] bg-white/70 p-10 shadow-card backdrop-blur"
+          className="grid gap-6 rounded-3xl bg-white p-6 shadow-card sm:p-8"
           onDragOver={(event) => {
             event.preventDefault();
             setIsDragging(true);
@@ -1181,17 +1189,6 @@ export default function LandingsApp() {
               Upload your ForeFlight logbook and see every public airport you have
               visited across the United States.
             </p>
-            <div className="flex flex-wrap gap-2 text-xs text-ink/70">
-              <span className="rounded-full border border-ink/10 bg-white px-3 py-1">
-                1. Upload ForeFlight CSV
-              </span>
-              <span className="rounded-full border border-ink/10 bg-white px-3 py-1">
-                2. Pick your home base
-              </span>
-              <span className="rounded-full border border-ink/10 bg-white px-3 py-1">
-                3. Plan next airports
-              </span>
-            </div>
           </div>
 
           {isDemo && (
@@ -1310,7 +1307,7 @@ export default function LandingsApp() {
                 </span>
               </div>
               <div
-                className="flex items-center gap-2 rounded-full border border-ink/10 bg-white px-3 py-2 text-xs text-ink/70 shadow-card"
+                className="flex flex-wrap items-center gap-2 rounded-2xl border border-ink/10 bg-white px-3 py-2 text-xs text-ink/70 shadow-card"
                 role="radiogroup"
                 aria-label="Airport visibility"
               >
@@ -1544,15 +1541,10 @@ export default function LandingsApp() {
             <>
               <div className="rounded-3xl border border-ink/10 bg-white p-6 shadow-card">
                 <details open>
-                  <summary className="font-display text-lg text-ink">
-                    Trip Planner ({tripPlannerRows.length})
-                  </summary>
-                  <div className="mt-4 space-y-4">
-                    <p className="text-sm text-ink/70">
-                      Find your next airports near home base using distance, runway,
-                      surface, and tower filters.
-                    </p>
-
+                <summary className="font-display text-lg text-ink">
+                  Trip Planner ({tripPlannerRows.length})
+                </summary>
+                <div className="mt-4 space-y-4">
                     <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                       <label className="flex flex-col gap-2 text-sm text-ink/70">
                         <span className="font-medium text-ink">Home base airport</span>
@@ -1649,21 +1641,17 @@ export default function LandingsApp() {
                     </div>
 
                     {homeBaseOptions.length === 0 ? (
-                      <p className="rounded-2xl border border-ink/10 bg-bone px-4 py-3 text-sm text-ink/70">
-                        Pick up some visited airports first, then this planner will
-                        suggest nearby new targets.
-                      </p>
+                      <div className="rounded-2xl border border-ink/10 bg-bone px-4 py-3 text-sm text-ink/70">
+                        No visited airports yet.
+                      </div>
                     ) : !homeBaseFacility ||
                       homeBaseFacility.latitude === undefined ||
                       homeBaseFacility.longitude === undefined ? (
-                      <p className="rounded-2xl border border-ink/10 bg-bone px-4 py-3 text-sm text-ink/70">
-                        Select a home base with known coordinates to use trip planning.
-                      </p>
+                      <div className="rounded-2xl border border-ink/10 bg-bone px-4 py-3 text-sm text-ink/70">
+                        Home base has no coordinates.
+                      </div>
                     ) : (
                       <>
-                        <div className="text-xs text-ink/60">
-                          Showing closest matching unvisited airports in {scopeLabel}.
-                        </div>
                         <div className="max-h-[360px] overflow-y-auto overflow-x-auto rounded-2xl border border-ink/10">
                           <table className="w-full text-left text-sm">
                             <thead className="sticky top-0 z-10 bg-white text-xs uppercase text-ink/50">
@@ -1690,8 +1678,10 @@ export default function LandingsApp() {
                                     {Math.round(distanceNm)} nm
                                   </td>
                                   <td className="px-3 py-2">
-                                    {facility.longestRunwayFt
-                                      ? `${facility.longestRunwayFt.toLocaleString()} ft`
+                                    {getPlannedRunwayFt(facility.longestRunwayFt)
+                                      ? `${getPlannedRunwayFt(
+                                          facility.longestRunwayFt
+                                        )?.toLocaleString()} ft`
                                       : "—"}
                                   </td>
                                   <td className="px-3 py-2">
@@ -1710,8 +1700,7 @@ export default function LandingsApp() {
                           </table>
                           {tripPlannerRows.length === 0 && (
                             <p className="px-3 py-4 text-sm text-ink/60">
-                              No airports match your trip filters. Increase distance or
-                              relax runway/surface filters.
+                              No unvisited airports match this filter in {scopeLabel}.
                             </p>
                           )}
                         </div>

@@ -13,7 +13,15 @@ export type FlightsParseResult = {
 };
 
 const HEADER_TERMINATOR = /Table\s*$/i;
-const REQUIRED_HEADERS = ["date", "from", "to"];
+const DATE_HEADER_ALIASES = ["date", "flightdate"];
+const FROM_HEADER_ALIASES = [
+  "from",
+  "origin",
+  "departure",
+  "fromairport",
+  "departureairport"
+];
+const TO_HEADER_ALIASES = ["to", "destination", "arrival", "toairport", "arrivalairport"];
 const TEXT_HEADER_HINTS = [
   "notes",
   "remarks",
@@ -25,7 +33,7 @@ const TEXT_HEADER_HINTS = [
 ];
 
 function normalizeHeaderCell(value: string): string {
-  return value.trim().toLowerCase();
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
 
 function isRowEmpty(row: string[]): boolean {
@@ -42,12 +50,19 @@ function isSectionHeader(row: string[]): boolean {
 function findFlightsHeaderIndex(rows: string[][]): number {
   return rows.findIndex((row) => {
     const normalized = row.map(normalizeHeaderCell);
-    return REQUIRED_HEADERS.every((header) => normalized.includes(header));
+    const hasDate = DATE_HEADER_ALIASES.some((header) => normalized.includes(header));
+    const hasFrom = FROM_HEADER_ALIASES.some((header) => normalized.includes(header));
+    const hasTo = TO_HEADER_ALIASES.some((header) => normalized.includes(header));
+    return hasDate && hasFrom && hasTo;
   });
 }
 
-function findColumnIndex(headers: string[], key: string): number {
-  return headers.findIndex((header) => header === key);
+function findColumnIndex(headers: string[], aliases: string[]): number {
+  for (const alias of aliases) {
+    const index = headers.findIndex((header) => header === alias);
+    if (index !== -1) return index;
+  }
+  return -1;
 }
 
 function findTextColumns(headers: string[]): number[] {
@@ -78,9 +93,12 @@ export function parseForeFlightCsv(csvText: string): FlightsParseResult {
   }
 
   const headerRow = rows[headerIndex].map(normalizeHeaderCell);
-  const fromIndex = findColumnIndex(headerRow, "from");
-  const toIndex = findColumnIndex(headerRow, "to");
-  const dateIndex = findColumnIndex(headerRow, "date");
+  const fromIndex = findColumnIndex(headerRow, FROM_HEADER_ALIASES);
+  const toIndex = findColumnIndex(headerRow, TO_HEADER_ALIASES);
+  const dateIndex = findColumnIndex(headerRow, DATE_HEADER_ALIASES);
+  if (fromIndex === -1 || toIndex === -1 || dateIndex === -1) {
+    return { flights: [], error: "No Flights Table found." };
+  }
   const textIndexes = findTextColumns(headerRow);
 
   const flights: FlightRow[] = [];

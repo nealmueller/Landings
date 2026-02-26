@@ -29,4 +29,18 @@ describe("parseForeFlightCsv", () => {
     const result = parseForeFlightCsv("Header,Only\n1,2");
     expect(result.error).toBe("No Flights Table found.");
   });
+
+  it("accepts common header aliases for origin/destination", () => {
+    const aliasCsv = [
+      "Flights Table",
+      "Flight Date,Origin,Destination,Remarks",
+      "2024-01-05,KSFO,KSQL,Test"
+    ].join("\n");
+
+    const result = parseForeFlightCsv(aliasCsv);
+    expect(result.error).toBeUndefined();
+    expect(result.flights).toHaveLength(1);
+    expect(result.flights[0].from).toBe("KSFO");
+    expect(result.flights[0].to).toBe("KSQL");
+  });
 });

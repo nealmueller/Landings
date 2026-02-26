@@ -31,6 +31,12 @@ This runs lint, tests, and production build locally. The same checks run in CI o
 - Dot size is stored in localStorage.
 - Use the “Clear local data” button in the Import ForeFlight CSV panel to remove the saved logbook and settings.
 
+## Matching behavior
+
+- `From`, `To`, and free-text fields (route/remarks/comments/approaches) are scanned for airport IDs.
+- Coordinate endpoints like `37.52°N/122.19°W` are matched to the nearest airport when close enough.
+- Trip planner runway filtering uses a conservative planning length of `75%` of published runway length.
+
 ## Data sources
 
 - FAA NASR APT_BASE + APT_RWY (US public airports) -> `data/us/facilities_master.csv`
