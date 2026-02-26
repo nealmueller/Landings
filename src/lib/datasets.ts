@@ -2,6 +2,7 @@ import Papa from "papaparse";
 import { normalizeFacilityId } from "@/lib/normalize";
 
 export type SurfaceCategory = "paved" | "unpaved" | "water" | "unknown";
+export type UseCategory = "public" | "private";
 
 export type Facility = {
   id: string;
@@ -14,6 +15,9 @@ export type Facility = {
   towered?: boolean;
   longestRunwayFt?: number;
   surfaceCategory?: SurfaceCategory;
+  useCategory?: UseCategory;
+  contactPhone?: string;
+  infoUrl?: string;
   source: "public" | "ourairports";
   type?: string;
   sources?: string;
@@ -65,6 +69,16 @@ export function parseFacilitiesMaster(csvText: string): Facility[] {
       surfaceValue === "unknown"
         ? (surfaceValue as SurfaceCategory)
         : undefined;
+    const useValue = (row.use_category || row.USE_CATEGORY || "")
+      .trim()
+      .toLowerCase();
+    const useCategory =
+      useValue === "public" || useValue === "private"
+        ? (useValue as UseCategory)
+        : undefined;
+    const infoUrl = (row.info_url || row.INFO_URL || "").trim() || undefined;
+    const contactPhone =
+      (row.contact_phone || row.CONTACT_PHONE || "").trim() || undefined;
 
     return [
       {
@@ -80,6 +94,9 @@ export function parseFacilitiesMaster(csvText: string): Facility[] {
           ? longestRunwayFt
           : undefined,
         surfaceCategory,
+        useCategory,
+        infoUrl,
+        contactPhone,
         source: "public",
         type: row.type,
         sources: row.sources,

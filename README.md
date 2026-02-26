@@ -1,6 +1,6 @@
 # Landings
 
-Landing coverage and trip planning for ForeFlight logbooks across US public airports.
+Landing coverage and trip planning for ForeFlight logbooks across US public airports, with optional private-airport targets in Trip Planner.
 
 ## Run locally
 
@@ -39,7 +39,7 @@ This runs lint, tests, and production build locally. The same checks run in CI o
 
 ## Data sources
 
-- FAA NASR APT_BASE + APT_RWY (US public airports) -> `data/us/facilities_master.csv`
+- FAA NASR APT_BASE + APT_RWY (US public + private airport records)
 - Raw source inputs live under `data/raw`
 
 ### Rebuild the master list
@@ -52,6 +52,8 @@ Dataset build output is written to:
 
 - `data/us/facilities_master.csv`
 - `public/data/us/facilities_master.csv`
+- `data/us/facilities_private.csv`
+- `public/data/us/facilities_private.csv`
 - `data/us/sources.json`
 - `public/data/us/sources.json`
 
@@ -66,6 +68,9 @@ The builder now enriches each airport with:
 - Towered status
 - Longest runway length (ft)
 - Surface category (`paved`, `unpaved`, `water`, or `unknown`)
+- Use category (`public` or `private`)
+- Airport info URL
+- Optional contact phone when available
 
 ## Deployment
 

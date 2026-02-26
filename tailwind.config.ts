@@ -9,21 +9,21 @@ const config: Config = {
   theme: {
     extend: {
       fontFamily: {
-        sans: ["'IBM Plex Sans'", "ui-sans-serif", "system-ui", "-apple-system", "Segoe UI", "sans-serif"],
-        display: ["'Fraunces'", "ui-serif", "Georgia", "serif"]
+        sans: ["'Sora'", "ui-sans-serif", "system-ui", "-apple-system", "Segoe UI", "sans-serif"],
+        display: ["'Bricolage Grotesque'", "ui-sans-serif", "system-ui", "sans-serif"]
       },
       colors: {
-        ink: "#121417",
-        bone: "#F3F0E8",
-        sage: "#B9C7A5",
-        clay: "#C9A07C",
-        fog: "#E7E2D8",
-        pine: "#2D4A3C",
-        sun: "#F9C971"
+        ink: "#142033",
+        bone: "#F1F6FF",
+        sage: "#B9D8CF",
+        clay: "#FFB28A",
+        fog: "#E4EDF9",
+        pine: "#0C4672",
+        sun: "#FFD36A"
       },
       boxShadow: {
-        card: "0 12px 40px rgba(18, 20, 23, 0.12)",
-        glow: "0 0 0 3px rgba(249, 201, 113, 0.4)"
+        card: "0 14px 32px rgba(12, 70, 114, 0.14)",
+        glow: "0 0 0 3px rgba(255, 211, 106, 0.45)"
       }
     }
   },

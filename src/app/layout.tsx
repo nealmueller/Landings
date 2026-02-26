@@ -3,7 +3,7 @@ import "./globals.css";
 
 const metaTitle = "Landings – US Landings from your ForeFlight logbook";
 const metaDescription =
-  "Upload your ForeFlight logbook CSV to visualize US public airport coverage by map, state, and airport list.";
+  "Upload your ForeFlight logbook CSV to visualize US airport coverage and plan nearby public or private destinations.";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://landingbadge.com"),

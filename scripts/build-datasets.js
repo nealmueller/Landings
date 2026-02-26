@@ -28,6 +28,8 @@ const UNPAVED_SURFACE_HINTS = [
   "SNOW",
   "ICE"
 ];
+const PRIVATE_USE_CODES = new Set(["PR"]);
+const PUBLIC_USE_CODES = new Set(["PU"]);
 
 function resolveFaaSource() {
   const candidates = fs
@@ -81,6 +83,19 @@ function normalizeId(value) {
     cleaned = cleaned.slice(1);
   }
   return cleaned;
+}
+
+function normalizePhone(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const digits = raw.replace(/[^\d+]/g, "");
+  if (digits.length < 7) return "";
+  return digits;
+}
+
+function buildInfoUrl(id) {
+  if (!id) return "";
+  return `https://www.airnav.com/airport/${id}`;
 }
 
 const STATE_LIST = [
@@ -280,6 +295,9 @@ function buildFacilityList() {
         towered: false,
         longestRunwayFt: undefined,
         surfaceCategory: "unknown",
+        useCategory: "",
+        contactPhone: "",
+        infoUrl: buildInfoUrl(id),
         type: "airport",
         sources: new Set(),
         corroborated: false,
@@ -312,7 +330,12 @@ function buildFacilityList() {
   for (const row of faaRows) {
     if (!STATE_CODES.has(row.STATE_CODE)) continue;
     if (row.SITE_TYPE_CODE !== "A") continue;
-    if (row.FACILITY_USE_CODE !== "PU") continue;
+    if (
+      !PUBLIC_USE_CODES.has(row.FACILITY_USE_CODE) &&
+      !PRIVATE_USE_CODES.has(row.FACILITY_USE_CODE)
+    ) {
+      continue;
+    }
     const id = normalizeId(row.ARPT_ID || row.ICAO_ID);
     if (!id) continue;
     const entry = getOrCreate(id);
@@ -326,6 +349,15 @@ function buildFacilityList() {
     applyField(entry, "latitude", lat, "faa");
     applyField(entry, "longitude", lon, "faa");
     entry.towered = isTowered(row.TWR_TYPE_CODE);
+    if (PRIVATE_USE_CODES.has(row.FACILITY_USE_CODE)) {
+      if (entry.useCategory !== "public") entry.useCategory = "private";
+    } else if (PUBLIC_USE_CODES.has(row.FACILITY_USE_CODE)) {
+      entry.useCategory = "public";
+    }
+    if (!entry.contactPhone) {
+      entry.contactPhone =
+        normalizePhone(row.PHONE_NO) || normalizePhone(row.TOLL_FREE_NO);
+    }
   }
 
   const entries = Array.from(records.values());
@@ -338,7 +370,7 @@ function buildFacilityList() {
   for (const entry of entries) {
     entry.corroborated = entry.sources.size > 1;
   }
-  const facilities = entries
+  const allFacilities = entries
     .map((entry) => {
       const sources = Array.from(entry.sources).sort().join(";");
       return {
@@ -352,6 +384,9 @@ function buildFacilityList() {
         towered: entry.towered ? "yes" : "no",
         longest_runway_ft: entry.longestRunwayFt ?? "",
         surface_category: entry.surfaceCategory || "unknown",
+        use_category: entry.useCategory || "public",
+        contact_phone: entry.contactPhone || "",
+        info_url: entry.infoUrl || "",
         type: entry.type || "airport",
         sources,
         corroborated: entry.corroborated ? "yes" : "no"
@@ -359,11 +394,18 @@ function buildFacilityList() {
     })
     .sort((a, b) => a.id.localeCompare(b.id));
 
+  const publicFacilities = allFacilities.filter(
+    (facility) => facility.use_category === "public"
+  );
+  const privateFacilities = allFacilities.filter(
+    (facility) => facility.use_category === "private"
+  );
+
   const sourceCounts = {
     faa: { total: 0, corroborated: 0 }
   };
 
-  for (const entry of entries) {
+  for (const entry of entries.filter((item) => item.useCategory === "public")) {
     for (const source of entry.sources) {
       sourceCounts[source].total += 1;
       if (entry.corroborated) {
@@ -372,7 +414,7 @@ function buildFacilityList() {
     }
   }
 
-  return { facilities, sourceCounts };
+  return { publicFacilities, privateFacilities, sourceCounts };
 }
 
 function formatPercent(value) {
@@ -409,7 +451,7 @@ function buildSourcesMetadata(sourceCounts) {
 
 function writeCsv(filePath, facilities) {
   const header =
-    "id,state,name,city,county,latitude,longitude,towered,longest_runway_ft,surface_category,type,sources,corroborated";
+    "id,state,name,city,county,latitude,longitude,towered,longest_runway_ft,surface_category,use_category,contact_phone,info_url,type,sources,corroborated";
   const lines = facilities.map((facility) => {
     const values = [
       facility.id,
@@ -422,6 +464,9 @@ function writeCsv(filePath, facilities) {
       facility.towered ?? "",
       facility.longest_runway_ft ?? "",
       facility.surface_category ?? "",
+      facility.use_category ?? "",
+      facility.contact_phone ?? "",
+      facility.info_url ?? "",
       facility.type,
       facility.sources,
       facility.corroborated
@@ -442,20 +487,28 @@ function main() {
   ensureDir(OUTPUT_DIR);
   ensureDir(PUBLIC_OUTPUT_DIR);
 
-  const { facilities, sourceCounts } = buildFacilityList();
+  const { publicFacilities, privateFacilities, sourceCounts } = buildFacilityList();
   const sourcesMeta = buildSourcesMetadata(sourceCounts);
 
   const csvPath = path.join(OUTPUT_DIR, "facilities_master.csv");
   const publicCsvPath = path.join(PUBLIC_OUTPUT_DIR, "facilities_master.csv");
+  const privateCsvPath = path.join(OUTPUT_DIR, "facilities_private.csv");
+  const publicPrivateCsvPath = path.join(
+    PUBLIC_OUTPUT_DIR,
+    "facilities_private.csv"
+  );
   const sourcesPath = path.join(OUTPUT_DIR, "sources.json");
   const publicSourcesPath = path.join(PUBLIC_OUTPUT_DIR, "sources.json");
 
-  writeCsv(csvPath, facilities);
-  writeCsv(publicCsvPath, facilities);
+  writeCsv(csvPath, publicFacilities);
+  writeCsv(publicCsvPath, publicFacilities);
+  writeCsv(privateCsvPath, privateFacilities);
+  writeCsv(publicPrivateCsvPath, privateFacilities);
   fs.writeFileSync(sourcesPath, JSON.stringify(sourcesMeta, null, 2));
   fs.writeFileSync(publicSourcesPath, JSON.stringify(sourcesMeta, null, 2));
 
-  console.log(`Wrote ${facilities.length} facilities to ${csvPath}`);
+  console.log(`Wrote ${publicFacilities.length} public facilities to ${csvPath}`);
+  console.log(`Wrote ${privateFacilities.length} private facilities to ${privateCsvPath}`);
   console.log(`Wrote sources metadata to ${sourcesPath}`);
 }
 

@@ -119,6 +119,7 @@ type SortKey = (typeof mapSortOptions)[number]["value"];
 type UnvisitedSortKey = SortKey | "distance";
 type TripSurfaceFilter = "any" | "paved" | "unpaved" | "water";
 type TripTowerFilter = "any" | "towered" | "nontowered";
+type TripAccessFilter = "public" | "public_private";
 
 const sortAccessors: Record<SortKey, (facility: Facility) => string> = {
   id: (facility) => facility.id,
@@ -154,6 +155,11 @@ const tripRunwayOptions = [
   { value: 2500, label: "2,500+ ft" },
   { value: 3500, label: "3,500+ ft" }
 ] as const;
+
+const tripAccessOptions: Array<{ value: TripAccessFilter; label: string }> = [
+  { value: "public", label: "Public only" },
+  { value: "public_private", label: "Public + private" }
+];
 
 function formatPercent(value: number) {
   return `${Math.round(value * 100)}%`;
@@ -207,6 +213,19 @@ function sortFacilities(list: Facility[], sortKey: SortKey) {
 
 function getStateName(code: string) {
   return STATE_OPTIONS.find((state) => state.code === code)?.name || code;
+}
+
+function filterFacilitiesForState(
+  facilities: Facility[],
+  selectedState: string
+): Facility[] {
+  if (selectedState === "US") return facilities;
+  if (selectedState === "CONUS") {
+    return facilities.filter((facility) =>
+      facility.state ? CONTIGUOUS_STATE_CODES.has(facility.state) : false
+    );
+  }
+  return facilities.filter((facility) => facility.state === selectedState);
 }
 
 function getFacilitiesBounds(facilities: Facility[]) {
@@ -311,6 +330,7 @@ function buildDemoLogbook(facilitiesByState: Map<string, Facility[]>): FlightRow
 
 export default function LandingsApp() {
   const [publicFacilities, setPublicFacilities] = useState<Facility[]>([]);
+  const [privateFacilities, setPrivateFacilities] = useState<Facility[]>([]);
   const [publicError, setPublicError] = useState<string | null>(null);
   const [flights, setFlights] = useState<FlightRow[]>([]);
   const [flightError, setFlightError] = useState<string | null>(null);
@@ -337,6 +357,8 @@ export default function LandingsApp() {
   const [tripMaxDistanceNm, setTripMaxDistanceNm] = useState(
     TRIP_DISTANCE_DEFAULT
   );
+  const [tripAccessFilter, setTripAccessFilter] =
+    useState<TripAccessFilter>("public");
   const [tripMinRunwayFt, setTripMinRunwayFt] = useState(800);
   const [tripSurfaceFilter, setTripSurfaceFilter] =
     useState<TripSurfaceFilter>("paved");
@@ -385,6 +407,25 @@ export default function LandingsApp() {
       .catch(() => {
         if (!isMounted) return;
         setPublicError("Could not load built-in airports list.");
+      });
+
+    fetch("/data/us/facilities_private.csv")
+      .then((response) => {
+        if (!response.ok) return "";
+        return response.text();
+      })
+      .then((text) => {
+        if (!isMounted) return;
+        if (!text) {
+          setPrivateFacilities([]);
+          return;
+        }
+        const facilities = parseFacilitiesMaster(text);
+        setPrivateFacilities(facilities);
+      })
+      .catch(() => {
+        if (!isMounted) return;
+        setPrivateFacilities([]);
       });
 
     fetch("/data/us/sources.json")
@@ -520,14 +561,25 @@ export default function LandingsApp() {
   }, [mapFilter, selectedState, flights.length]);
 
   const selectedFacilities = useMemo(() => {
-    if (selectedState === "US") return scopeFacilities;
-    if (selectedState === "CONUS") {
-      return scopeFacilities.filter((facility) =>
-        facility.state ? CONTIGUOUS_STATE_CODES.has(facility.state) : false
-      );
-    }
-    return facilitiesByState.get(selectedState) || [];
-  }, [facilitiesByState, scopeFacilities, selectedState]);
+    return filterFacilitiesForState(scopeFacilities, selectedState);
+  }, [scopeFacilities, selectedState]);
+
+  const selectedPrivateFacilities = useMemo(
+    () => filterFacilitiesForState(privateFacilities, selectedState),
+    [privateFacilities, selectedState]
+  );
+
+  const plannerFacilities = useMemo(() => {
+    if (tripAccessFilter === "public") return selectedFacilities;
+    const combined = new Map<string, Facility>();
+    selectedFacilities.forEach((facility) => combined.set(facility.id, facility));
+    selectedPrivateFacilities.forEach((facility) => {
+      if (!combined.has(facility.id)) {
+        combined.set(facility.id, facility);
+      }
+    });
+    return Array.from(combined.values());
+  }, [selectedFacilities, selectedPrivateFacilities, tripAccessFilter]);
 
   const scopeLabel = useMemo(() => getStateName(selectedState), [selectedState]);
 
@@ -549,6 +601,16 @@ export default function LandingsApp() {
   const facilityById = useMemo(
     () => new Map(scopeFacilities.map((facility) => [facility.id, facility])),
     [scopeFacilities]
+  );
+
+  const plannerFacilityIds = useMemo(
+    () => new Set(plannerFacilities.map((facility) => facility.id)),
+    [plannerFacilities]
+  );
+
+  const plannerFacilityById = useMemo(
+    () => new Map(plannerFacilities.map((facility) => [facility.id, facility])),
+    [plannerFacilities]
   );
 
   const visitStats = useMemo(() => {
@@ -637,6 +699,11 @@ export default function LandingsApp() {
     [flights, facilityById, facilityIds]
   );
 
+  const plannerMatches = useMemo(
+    () => computeFacilityMatches(flights, plannerFacilityIds, plannerFacilityById),
+    [flights, plannerFacilityById, plannerFacilityIds]
+  );
+
   const visitedSet = useMemo(
     () =>
       computeVisitedSet(matches, {
@@ -645,6 +712,16 @@ export default function LandingsApp() {
         arrivalsOnly: false
       }),
     [matches]
+  );
+
+  const plannerVisitedSet = useMemo(
+    () =>
+      computeVisitedSet(plannerMatches, {
+        includeNotes: true,
+        useEndpoints: true,
+        arrivalsOnly: false
+      }),
+    [plannerMatches]
   );
 
   const scopeFilteredFacilities = useMemo(() => {
@@ -658,8 +735,8 @@ export default function LandingsApp() {
   }, [mapFilter, selectedFacilities, visitedSet]);
 
   const unvisitedInScope = useMemo(
-    () => selectedFacilities.filter((facility) => !visitedSet.has(facility.id)),
-    [selectedFacilities, visitedSet]
+    () => plannerFacilities.filter((facility) => !plannerVisitedSet.has(facility.id)),
+    [plannerFacilities, plannerVisitedSet]
   );
 
   const visitedFacilities = useMemo(
@@ -1137,6 +1214,7 @@ export default function LandingsApp() {
   }, [
     homeBaseId,
     selectedState,
+    tripAccessFilter,
     tripMaxDistanceNm,
     tripMinRunwayFt,
     tripSurfaceFilter,
@@ -1148,9 +1226,9 @@ export default function LandingsApp() {
   }, [debouncedUnvisitedSearch, mapFilter, unvisitedSort, selectedState, homeBaseId]);
 
   return (
-    <div className="min-h-screen bg-bone" id="top">
+    <div className="min-h-screen" id="top">
       <div className="mx-auto flex max-w-7xl flex-col gap-8 px-4 py-6 sm:px-6 sm:py-10 lg:px-8">
-        <nav className="sticky top-2 z-20 flex flex-col gap-3 rounded-2xl border border-ink/10 bg-white/85 px-4 py-3 shadow-card backdrop-blur sm:flex-row sm:items-center sm:justify-between">
+        <nav className="sticky top-2 z-20 flex flex-col gap-3 rounded-3xl border border-white/70 bg-white/88 px-5 py-4 shadow-card backdrop-blur sm:flex-row sm:items-center sm:justify-between">
           <a
             href="#top"
             className="font-display text-xl text-ink hover:text-ink/80"
@@ -1176,7 +1254,7 @@ export default function LandingsApp() {
         </nav>
 
         <section
-          className="grid gap-6 rounded-3xl bg-white p-6 shadow-card sm:p-8"
+          className="grid gap-6 rounded-[32px] border border-white/80 bg-white/95 p-6 shadow-card sm:p-8"
           onDragOver={(event) => {
             event.preventDefault();
             setIsDragging(true);
@@ -1192,7 +1270,7 @@ export default function LandingsApp() {
           </div>
 
           {isDemo && (
-            <div className="rounded-2xl border border-ink/10 bg-white px-4 py-3 text-sm text-ink/70 shadow-card">
+              <div className="rounded-2xl border border-ink/10 bg-white px-4 py-3 text-sm text-ink/70 shadow-card">
               You are viewing a demo pilot. Upload your own ForeFlight logbook CSV to see
               your real logbook.
             </div>
@@ -1206,7 +1284,7 @@ export default function LandingsApp() {
 
           <div
             className={`rounded-3xl border border-dashed p-6 ${
-              isDragging ? "border-ink/50 bg-white/80" : "border-ink/20 bg-white/60"
+              isDragging ? "border-ink/50 bg-white" : "border-ink/15 bg-[#f7fbff]"
             }`}
           >
             <div className="flex flex-wrap gap-3">
@@ -1280,20 +1358,20 @@ export default function LandingsApp() {
                 {formatPercent(coverage.ratio)}) in {scopeLabel}.
               </p>
               <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-ink/70">
-                <span className="rounded-full border border-ink/10 bg-white px-3 py-1">
+                <span className="rounded-full border border-white/80 bg-white/85 px-3 py-1">
                   Most visited state: {mostVisitedState}
                 </span>
-                <span className="rounded-full border border-ink/10 bg-white px-3 py-1">
+                <span className="rounded-full border border-white/80 bg-white/85 px-3 py-1">
                   Most visited airport: {mostVisitedAirport}
                 </span>
-                <span className="rounded-full border border-ink/10 bg-white px-3 py-1">
+                <span className="rounded-full border border-white/80 bg-white/85 px-3 py-1">
                   Last new airport: {lastNewAirport.label} on{" "}
                   {lastNewAirport.date}
                 </span>
               </div>
             </div>
             <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center">
-              <div className="flex items-center gap-3 rounded-full border border-ink/10 bg-white px-4 py-2 text-xs text-ink/70 shadow-card">
+              <div className="flex items-center gap-3 rounded-full border border-white/80 bg-white/90 px-4 py-2 text-xs text-ink/70 shadow-card">
                 <span className="uppercase tracking-[0.2em] text-ink/50">
                   Legend
                 </span>
@@ -1307,7 +1385,7 @@ export default function LandingsApp() {
                 </span>
               </div>
               <div
-                className="flex flex-wrap items-center gap-2 rounded-2xl border border-ink/10 bg-white px-3 py-2 text-xs text-ink/70 shadow-card"
+                className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/80 bg-white/90 px-3 py-2 text-xs text-ink/70 shadow-card"
                 role="radiogroup"
                 aria-label="Airport visibility"
               >
@@ -1346,7 +1424,7 @@ export default function LandingsApp() {
                   Unvisited only
                 </button>
               </div>
-              <label className="flex items-center gap-2 rounded-full border border-ink/10 bg-white px-4 py-2 text-xs text-ink/70 shadow-card">
+              <label className="flex items-center gap-2 rounded-full border border-white/80 bg-white/90 px-4 py-2 text-xs text-ink/70 shadow-card">
                 <span className="uppercase tracking-[0.2em] text-ink/50">
                   State
                 </span>
@@ -1366,7 +1444,7 @@ export default function LandingsApp() {
                   ))}
                 </select>
               </label>
-              <div className="flex items-center gap-3 rounded-full border border-ink/10 bg-white px-4 py-2 text-xs text-ink/70 shadow-card">
+              <div className="flex items-center gap-3 rounded-full border border-white/80 bg-white/90 px-4 py-2 text-xs text-ink/70 shadow-card">
                 <span className="uppercase tracking-[0.2em] text-ink/50">
                   Dot size
                 </span>
@@ -1395,7 +1473,7 @@ export default function LandingsApp() {
               fitPadding={selectedState === "US" || selectedState === "CONUS" ? [0, 0] : [12, 12]}
             />
             {isMapUpdating && (
-              <div className="pointer-events-none absolute right-4 top-4 rounded-full border border-ink/10 bg-white px-3 py-1 text-xs text-ink/70 shadow-card">
+              <div className="pointer-events-none absolute right-4 top-4 rounded-full border border-white/80 bg-white/95 px-3 py-1 text-xs text-ink/70 shadow-card">
                 Updating map...
               </div>
             )}
@@ -1411,7 +1489,7 @@ export default function LandingsApp() {
             </div>
           ) : (
             <>
-              <div className="rounded-3xl border border-ink/10 bg-white p-6 shadow-card">
+            <div className="rounded-3xl border border-white/80 bg-white/95 p-6 shadow-card">
                 <details open>
                   <summary className="font-display text-lg text-ink">
                     States in Logbook ({statesInLogbook.length})
@@ -1604,6 +1682,23 @@ export default function LandingsApp() {
                       </label>
 
                       <label className="flex flex-col gap-2 text-sm text-ink/70">
+                        <span className="font-medium text-ink">Airport access</span>
+                        <select
+                          className="min-h-[44px] rounded-xl border border-ink/10 px-3 py-2 text-sm"
+                          value={tripAccessFilter}
+                          onChange={(event) =>
+                            setTripAccessFilter(event.target.value as TripAccessFilter)
+                          }
+                        >
+                          {tripAccessOptions.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <label className="flex flex-col gap-2 text-sm text-ink/70">
                         <span className="font-medium text-ink">Surface</span>
                         <select
                           className="min-h-[44px] rounded-xl border border-ink/10 px-3 py-2 text-sm"
@@ -1662,6 +1757,8 @@ export default function LandingsApp() {
                                 <th className="px-3 py-2">Runway</th>
                                 <th className="px-3 py-2">Surface</th>
                                 <th className="px-3 py-2">Towered</th>
+                                <th className="px-3 py-2">Access</th>
+                                <th className="px-3 py-2">Info</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -1693,6 +1790,34 @@ export default function LandingsApp() {
                                       : facility.towered === false
                                         ? "No"
                                         : "Unknown"}
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    {facility.useCategory === "private"
+                                      ? "Private"
+                                      : "Public"}
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    <div className="flex flex-col gap-1">
+                                      {facility.infoUrl && (
+                                        <a
+                                          href={facility.infoUrl}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="text-xs font-medium text-[#0b2f8f] hover:underline"
+                                        >
+                                          Airport info
+                                        </a>
+                                      )}
+                                      {facility.useCategory === "private" &&
+                                        facility.contactPhone && (
+                                          <a
+                                            href={`tel:${facility.contactPhone}`}
+                                            className="text-xs font-medium text-[#0b2f8f] hover:underline"
+                                          >
+                                            Request access
+                                          </a>
+                                        )}
+                                    </div>
                                   </td>
                                 </tr>
                               ))}
@@ -1740,7 +1865,7 @@ export default function LandingsApp() {
               </div>
 
               <div className="grid gap-6 lg:grid-cols-2">
-                <div className="rounded-3xl border border-ink/10 bg-white p-6 shadow-card">
+                <div className="rounded-3xl border border-white/80 bg-white/95 p-6 shadow-card">
                   <details open>
                     <summary className="font-display text-lg text-ink">
                       Visited Airports ({visitedFiltered.length})
@@ -1840,7 +1965,7 @@ export default function LandingsApp() {
                   </details>
                 </div>
 
-                <div className="rounded-3xl border border-ink/10 bg-white p-6 shadow-card">
+                <div className="rounded-3xl border border-white/80 bg-white/95 p-6 shadow-card">
                   <details open>
                     <summary className="font-display text-lg text-ink">
                       Unvisited Airports ({unvisitedSorted.length})
@@ -1961,7 +2086,7 @@ export default function LandingsApp() {
           )}
         </section>
 
-        <section className="rounded-3xl border border-ink/10 bg-white p-6 text-xs text-ink/60 shadow-card">
+        <section className="rounded-3xl border border-white/80 bg-white/90 p-6 text-xs text-ink/60 shadow-card">
           © 2024 Landings. All rights reserved. All logbook parsing happens in your
           browser. No flight data is sent to a server. {sourcesSummary}
         </section>
